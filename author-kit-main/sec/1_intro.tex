@@ -1,0 +1,117 @@
+
+%\begin{figure*}[t]
+%	\centering
+%	\includegraphics[width=0.9\linewidth, trim=18 18 18 18,clip]{fig/referring_segmentation_paradigms.pdf}
+%	\caption{Comparison of referring segmentation paradigms. Existing systems expose segmentation through fixed token embeddings, polygon coordinates, or patch-level decisions. PLAS reads a grid of readout tokens in parallel, maps them to a spatially organized mask latent, aligns it with a teacher learned from ground-truth masks, and decodes it through a dense-prompt adapter and an image-conditioned mask decoder.}
+%	\label{fig:paradigms}
+%\end{figure*}
+\section{Introduction}
+\label{sec:intro}
+
+Referring image segmentation (RIS) aims to identify
+objects described by natural-language expressions
+and delineate their precise pixel-level masks.
+This task requires both semantic understanding
+of image--text relationships and accurate
+reconstruction of object geometry
+\cite{Yu2016ModelingContext,Mao2016RefCOCOg,Liu2023GRES}.
+Recently, multimodal large language models (MLLMs)
+have demonstrated remarkable capabilities in
+visual-language understanding and reasoning,
+offering new opportunities for RIS
+\cite{Liu2023LLaVA,Bai2025Qwen3VL}.
+However, effectively transforming rich multimodal
+representations within MLLMs into spatially
+precise segmentation features remains challenging.
+
+Existing MLLM-based segmentation methods commonly
+connect multimodal representations to mask prediction
+through different output interfaces, as summarized
+in \cref{tab:paradigms}. Methods such as
+LISA~\cite{Lai2024LISA} and
+GSVA~\cite{Xia2024GSVA} employ segmentation-token
+embeddings, while PixelLM~\cite{Ren2024PixelLM}
+introduces a multi-scale segmentation codebook and
+GLaMM~\cite{Rasheed2024GLaMM} combines segmentation
+tokens with image-conditioned mask decoding.
+Other methods, including
+SAM4MLLM~\cite{Chen2024SAM4MLLM},
+Text4Seg~\cite{Lan2025Text4Seg}, and
+STAMP~\cite{Liu2026STAMP},
+employ localization cues or patch-level predictions.
+Although effective, these approaches rely on
+different mechanisms to bridge multimodal understanding
+and pixel-level segmentation.
+Rather than focusing solely on output token counts
+or decoding steps, we investigate how to extract
+spatially organized segmentation features from
+MLLM hidden states and explicitly align them with
+fine-grained mask geometry before decoding.
+
+In fact, MLLMs establish rich visual--language interactions
+across multiple transformer layers, yet their hidden
+states are not inherently optimized for pixel-level
+segmentation. To address this challenge, we propose
+\textbf{PLAS} (Progressive Latent Alignment with
+Parallel Mask-Latent Prediction), an efficient
+RIS framework built upon learnable multimodal
+feature readout and progressive mask-latent
+alignment. Specifically, we introduce a set of
+learnable spatial readout tokens into the MLLM,
+enabling them to interact with visual and textual
+representations through the model's native
+attention mechanism. By integrating multi-layer
+hidden-state fusion, spatial refinement, and
+visual-grid features, PLAS extracts spatially
+organized, segmentation-aware representations
+in parallel within a single MLLM forward pass.
+The extracted features are subsequently mapped
+into mask latents and transformed into dense
+prompts for image-conditioned SAM decoding.
+
+Nevertheless, parallel multimodal readout alone
+does not guarantee the geometric precision
+required for pixel-level segmentation.
+We therefore develop a
+\textbf{progressive teacher--student learning
+	framework} to bridge the gap between multimodal
+semantic understanding and mask geometry.
+First, a mask-latent teacher learns
+geometry-aware representations from ground-truth
+masks through both image-free reconstruction
+and image-conditioned SAM reconstruction.
+Next, the student explicitly aligns its
+spatially adapted parallel readout features
+with the teacher-derived mask latents,
+progressively acquiring mask-level geometric
+knowledge.
+Finally, image-conditioned task adaptation
+transforms the predicted mask latents into
+dense prompts for SAM-based decoding.
+This progressive learning strategy establishes
+a direct connection between multimodal feature
+extraction and accurate pixel-level segmentation.
+
+Our contributions are as follows:
+\begin{itemize}
+    \item We propose an \textbf{in-MLLM spatial readout
+		architecture} with 256 learnable grid tokens,
+	multi-layer hidden-state fusion, spatial refinement,
+	and visual-grid injection, enabling one-pass extraction
+	of segmentation-aware features.
+	
+	\item We construct a \textbf{geometry-aware mask-latent
+		teacher} from ground-truth masks through image-free
+	and image-conditioned reconstruction, providing a dense
+	geometric target for multimodal feature learning.
+	
+	\item We develop a \textbf{progressive latent-to-mask
+		decoding scheme}: the student is first warmed up by
+	explicit latent alignment and then adapted with
+	image-conditioned SAM; the predicted latent is converted
+	into a dense prompt for final mask decoding.
+	
+	\item Experiments show a strong
+	\textbf{accuracy--efficiency trade-off}: \textbf{85.7\%}
+	cIoU on RefCOCO val at a model-side latency of \textbf{0.43 s/image}, with reported latency ratios corresponding to \textbf{1.63$\times$} and \textbf{2.49$\times$} faster inference than the fastest compared method and a method with comparable segmentation accuracy, respectively.
+\end{itemize}

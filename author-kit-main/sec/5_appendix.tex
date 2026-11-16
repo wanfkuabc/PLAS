@@ -1,0 +1,279 @@
+\section{Implementation details}
+\label{sec:appendix_impl}
+
+This section records the exact configuration behind every number in the main paper, so that the recipe can be reproduced without access to our code. The detailed training configurations of
+Stage~I, Stage~II-A, and Stage~II-B
+are summarized in \cref{tab:hyper}.
+
+\subsection{Input, metrics, and comparison protocol}
+\label{sec:app_protocol}
+
+\paragraph{Input format.}
+The image and expression are formatted with a fixed instruction template, ``Identify the exact image region referred to by the expression below. Use only visible image evidence. Expression: \{e\}'', and the 256 grid readout tokens are appended as the assistant turn. The full template, including the chat markers, is given in the supplementary material. Because the readout occupies a single assistant segment, all 256 readout states are obtained in one forward pass and no text is generated.
+
+\paragraph{Metrics.}
+For RefCOCO, RefCOCO+, and RefCOCOg, we report cumulative IoU (cIoU), computed as the cumulative intersection divided by the cumulative union over the evaluation set. For gRefCOCO, we report both cIoU and generalized IoU (gIoU), following the benchmark convention \cite{Liu2023GRES}. cIoU emphasizes aggregate pixel accuracy, while gIoU averages the per-expression IoU and therefore reflects performance across examples with different object sizes. All values are percentages; higher is better.
+
+\noindent\textbf{Comparison protocol.}
+The PLAS results are obtained using the evaluation
+protocol described in \cref{sec:experiments},
+while results for prior methods are transcribed
+from their reported benchmark tables.
+\Cref{tab:readout_ablation} provides controlled
+in-house comparisons of internal versus external
+readout and multi-layer versus single-layer reading,
+using the same backbone, latent adapter, decoder,
+data, and optimization budget.
+
+\subsection{Architecture and parameterization}
+\label{sec:app_arch}
+
+\paragraph{Language model and readout.}
+The student is built on Qwen3-VL-8B-Instruct \cite{Bai2025Qwen3VL}. The base weights are frozen and adapted with LoRA ($r{=}64$, $\alpha{=}128$, dropout $0.05$, no bias term) applied to every non-visual linear projection in the language stack, i.e.\ $q$, $k$, $v$, $o$ and the MLP $gate$, $up$, $down$ projections \cite{Hu2022LoRA}; the vision tower receives no adapter. The 256 readout tokens \texttt{<QWEN\_MASK\_GRID\_000>}--\texttt{<QWEN\_MASK\_GRID\_255>} are reserved vocabulary entries whose embeddings are the only trainable rows of the input embedding matrix. Their hidden states are read at layers $\{-1,-9,-17\}$ and mixed with learnable softmax weights, so the readout is a learned combination of three depths rather than the last layer alone.
+
+\paragraph{External-query control.}
+The External Query row in Table~\ref{tab:readout_ablation} uses exactly 256 learned queries arranged as a $16\times16$ grid. These queries are omitted from the Qwen input sequence; the reserved grid-token rows are frozen and excluded from the trainable budget in this variant. After one Qwen3-VL forward pass, the queries cross-attend to the same all-token hidden states after the same learned fusion of layers $\{-1,-9,-17\}$. The resulting 256 query features have the same width and are passed through the same text--spatial cross-attention, latent adapter (width $512$, depth $4$), dense-prompt adapter, and SAM ViT-H mask decoder as PLAS. The control uses the same $1024$-pixel input, RefCOCO/RefCOCO+/RefCOCOg/gRefCOCO training sources and balanced sampling, the same losses, AdamW optimizer and cosine schedule, and the same two $2$-epoch student stages. In the reported runs, both variants use batch $1$ per device, $16$ accumulation steps (effective batch $96$ on six GPUs), and the same parameter-group learning rates (LoRA $2\times10^{-5}$, latent adapter $1\times10^{-4}$, prompt adapter $5\times10^{-5}$, and selected SAM decoder layers $1\times10^{-5}$). The external model is retrained from the same frozen Stage-I teacher, and its post-MLLM cross-attention parameters are trained with the same recipe. Because this variant adds a post-MLLM cross-attention block, its total and trainable parameter counts are tracked separately; all downstream adapter and SAM decoder components are kept unchanged for the readout-placement comparison.
+
+\paragraph{Latent adapter.}
+The 256 fused states are reshaped onto the $16\times16$ readout grid, passed through four grid blocks (width $512$, $8$ heads, learned positional embedding) and bilinearly upsampled to $32\times32$. A residual convolution stack refines them, a detail branch injects Qwen's native-resolution visual features on the same grid, and a $1\times1$ projection emits $32$ channels. The output passes through $\mathrm{norm}(z)=\sqrt{C}\,z/\lVert z\rVert_2$ with the norm taken over channels, which places every spatial position on a sphere of radius $\sqrt{32}$ and makes a plain MSE equal to $2(1-\cos)$ up to scale. A text-to-spatial cross-attention block ($8$ heads, zero-initialized output projection) conditions each grid cell on the expression tokens; being zero-initialized, it is an identity map at step zero.
+
+\paragraph{Teacher and decoding.}
+The teacher's mask encoder maps a $256\times256$ mask through three stride-2 stages, producing feature maps of $128\times128$, $64\times64$, and $32\times32$, before projecting the result to $32$ channels and applying the same normalization. Its image-free head inverts this path with bilinear upsampling to $256\times256$. Its dense-prompt adapter projects the latent to $256$ channels, resamples to $64\times64$ and adds a $\tanh$-bounded residual scaled by a learnable gate initialized at $0.10$ and clamped to $[0,0.5]$; the output convolution is zero-initialized, so an untrained adapter reproduces SAM's native no-mask embedding exactly. The mask decoder is SAM ViT-H \cite{Kirillov2023SAM}, whose image encoder and prompt encoder stay frozen in every stage.
+
+\subsection{Input construction}
+\label{sec:app_input}
+
+The image is converted to RGB, resized so that its long side reaches $1024$ pixels with the aspect ratio preserved, and pasted into the top-left corner of a $1024\times1024$ canvas filled with the model's mean pixel value. Qwen receives this canvas resized to $1024\times1024$; SAM receives the same canvas, so the two encoders and the teacher latent share one coordinate frame \cite{Bai2025Qwen3VL,Kirillov2023SAM}. At this resolution Qwen's visual grid after spatial merging is $32\times32$: the detail branch consumes it directly at the latent resolution, while the readout-pairing branch average-pools it to $16\times16$ so that visual token $i$ and readout token $i$ index the same region.
+
+The ground-truth mask is resized to the image's canvas size with nearest-neighbour interpolation, zero-padded to $1024\times1024$ in the top-left, and area-resampled to $256\times256$ to form the mask canvas used by both the encoder and the reconstruction loss.
+
+The dialogue is the model's own chat template with a single user turn and a single assistant turn:
+\begin{quote}\ttfamily\small
+user: [image] Identify the exact image region referred to by the expression below. Use only visible image evidence.\textbackslash n Expression: \{e\}\\
+assistant: <QWEN\_MASK\_GRID\_000> \dots\ <QWEN\_MASK\_GRID\_255>
+\end{quote}
+The chat delimiters (\texttt{<|im\_start|>} and friends) are supplied by the tokenizer's template rather than written by us. The assistant segment is fully occupied by the 256 readout tokens, so one forward pass yields all readout states and no token is ever generated.
+
+\subsection{Stage I: teacher pretraining}
+\label{sec:app_stage1}
+
+Training runs in two sub-stages on the RefCOCO, RefCOCO+ and RefCOCOg training splits. The first ($1$ epoch) updates the mask encoder, the image-free head and the prompt adapter with SAM's mask decoder frozen; the second ($2$ epochs) additionally unfreezes the mask decoder at a tenfold lower learning rate. We use three GPUs with a per-device batch size of $4$ and $4$ gradient accumulation steps, giving an effective batch size of $48$ ($4\times4\times3$). The optimizer is AdamW with cosine decay, warmup ratio $0.03$, $\epsilon{=}10^{-6}$, gradient clipping $0.5$, and the run is kept in fp32 with TF32 matmuls because the regression target is small and bf16 rounding is comparable to the latent differences being optimized.
+
+The teacher is pretrained on the positive-mask RefCOCO, RefCOCO+ and RefCOCOg splits; gRefCOCO no-target and multi-target supervision is introduced during Stage~II student adaptation, where empty targets and union masks are included.
+
+The latent-noise curriculum is what makes the latent regressable. Each sample receives an independent noise level drawn uniformly from $[0,\sigma_{\max}]$, the perturbation is applied and then re-projected onto the sphere, and $\sigma_{\max}$ is held at $0$ for the first $30\%$ of steps before ramping linearly to $0.40$. The teacher is therefore trained on the clean latent (so the reconstruction ceiling is preserved) and on noisy latents spanning the error ball the student will actually land in. The loss is
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{\mathrm{I}} = {}& \mathrm{BCE}_{\mathrm{SAM}} + \mathrm{Dice}_{\mathrm{SAM}}
+ + \mathrm{BCE}^{\mathrm{noisy}}_{\mathrm{head}} + \mathrm{Dice}^{\mathrm{noisy}}_{\mathrm{head}} \\
+ & + 0.5\,\bigl(\mathrm{BCE}^{\mathrm{clean}}_{\mathrm{head}} + \mathrm{Dice}^{\mathrm{clean}}_{\mathrm{head}}\bigr),
+\end{aligned}
+\end{equation}
+where the SAM terms are computed at original resolution after \texttt{postprocess\_masks} and the head terms at the $256\times256$ canvas.
+
+\subsection{Stage II: student training}
+\label{sec:app_stage2}
+
+Stages II-A and II-B share one recipe and differ only in which losses and modules are active. Both train on the RefCOCO, RefCOCO+, RefCOCOg and gRefCOCO training splits with balanced source sampling: each of the four sources receives an equal quota per epoch (differing by at most one sample), and inside gRefCOCO every positive is followed by an empty expression at a $3{:}1$ ratio. This replaces the concatenated-dataset behaviour, under which the largest source dominated the gradient.
+
+The batch is $1$ per device with $16$ accumulation steps, giving an effective batch of $96$ across six RTX~4090D GPUs. The optimizer is AdamW with weight decay $0.01$, cosine decay, no warmup, bf16 autocast, gradient checkpointing and global gradient clipping $1.0$. Parameter groups use separate learning rates: LoRA $2\times10^{-5}$, latent adapter $1\times10^{-4}$, prompt adapter $5\times10^{-5}$, SAM decoder half $1\times10^{-5}$, and the prompt-calibrator gate $1\times10^{-3}$.
+
+Stage II-A ($2$ epochs) never invokes the SAM image encoder. Its loss is
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{\mathrm{II\text{-}A}} = {}& \mathrm{MSE}(z^S,z^T)
+ + 0.1\,\overline{\lVert z^S-z^T\rVert/\lVert z^T\rVert} \\
+ & + \mathrm{BCE}_{\mathrm{head}} + \mathrm{Dice}_{\mathrm{head}},
+\end{aligned}
+\end{equation}
+where the bar denotes the mean over spatial positions and both BCE and Dice are weighted $0.5$ on no-target expressions. The teacher is fully frozen here and its head is used only as a fixed geometric decoder, so the head cannot co-adapt with the student and the supervision stays a pure function of the latent.
+
+Stage II-B ($2$ epochs) activates the image-conditioned path and its loss is
+\begin{equation}
+\begin{aligned}
+\mathcal{L}_{\mathrm{II-B}} = {}& \mathrm{MSE}(z^S,z^T)
+ + 0.1\,\overline{\lVert z^S-z^T\rVert/\lVert z^T\rVert} \\
+ & + 2\,\mathrm{BCE}_{\mathrm{SAM}} + 2\,\mathrm{Dice}_{\mathrm{SAM}} .
+\end{aligned}
+\end{equation}
+Within the SAM mask decoder only the upper path is trainable: the last transformer layer, the final token-to-image attention and its norm, the output upscaling, the first hypernetwork MLP and the mask tokens, together with the dense-prompt adapter and the image-guided prompt calibrator; the remaining decoder parameters stay frozen. The frozen image encoder runs once per image and its features are shared by the prompt branch and the mask decoder.
+
+\begin{table}[!t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{2.0pt}
+  \renewcommand{\arraystretch}{0.98}
+  \caption{Training configuration. Stage I operates on masks only; Stages II-A and II-B train the MLLM student.}
+  \label{tab:hyper}
+  \begin{tabular}{lccc}
+    \toprule
+    & Stage I & Stage II-A & Stage II-B \\
+    \midrule
+    Modules trained & encoder, head, & LoRA, adapter, & + prompt adapter, \\
+    & prompt adapter, & text cross-attn & SAM decoder \\
+    & SAM decoder (2nd) & & (upper path) \\
+    Epochs & $1+2$ & $2$ & $2$ \\
+    GPUs & $3$ & $6$ & $6$ \\
+    Batch / device & $4$ & $1$ & $1$ \\
+    Accumulation & $4$ & $16$ & $16$ \\
+    Effective batch & $48$ & $96$ & $96$ \\
+    Precision & fp32 + TF32 & bf16 & bf16 \\
+    Optimizer & AdamW & AdamW & AdamW \\
+    Peak LR & $2\times10^{-5}$ & $2\times10^{-5}$ (LoRA) & $2\times10^{-5}$ (LoRA) \\
+    Schedule & cosine, $3\%$ warmup & cosine & cosine \\
+    Grad. clip & $0.5$ & $1.0$ & $1.0$ \\
+    Weight decay & $0$ & $0.01$ & $0.01$ \\
+    Latent noise $\sigma_{\max}$ & $0\rightarrow0.40$ & -- & -- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Evaluation protocol}
+\label{sec:app_eval}
+
+All reported numbers use one checkpoint evaluated at the training resolution ($1024$ pixels) and a single fixed binarization threshold of $0.55$; no threshold is tuned per split. Predictions are produced by decoding the latent through the deployment path (dense prompt $\rightarrow$ SAM mask decoder) and mapping the $256\times256$ output back to the original image size with SAM's own \texttt{postprocess\_masks} \cite{Kirillov2023SAM}, so no ground-truth geometry enters the mapping.
+
+For RefCOCO, RefCOCO+ and RefCOCOg, which contain only positive expressions, we report cumulative IoU, $\mathrm{cIoU}=\sum_i |P_i\cap G_i| / \sum_i |P_i\cup G_i|$, and generalized IoU, $\mathrm{gIoU}=\frac{1}{N}\sum_i |P_i\cap G_i|/|P_i\cup G_i|$. For gRefCOCO, we report cIoU and gIoU following the benchmark evaluation protocol \cite{Liu2023GRES}.
+
+The main table uses the Stage-II-B checkpoint. In Table~\ref{tab:stage_ablation}, the Stage-II-A value is the latent-warmup checkpoint trained with latent alignment and image-free-head BCE/Dice losses, then evaluated through the deployment SAM path. Table~\ref{tab:decoder_ablation} is a separate decoder-path ablation with independently evaluated Stage-II-A and Stage-II-B checkpoints; its Stage-II-A numbers therefore are not expected to equal those in Table~\ref{tab:stage_ablation}.
+
+\subsection{Sensitivity to the Qwen input resolution}
+\label{sec:app_resolution}
+
+We isolate the effect of the visual input size by reusing the same Stage-II-B checkpoint and changing only the resolution supplied to Qwen3-VL at inference. The LoRA weights, latent adapter, prompt adapter, SAM decoder, $1024\times1024$ SAM canvas, and binarization threshold ($0.55$) are unchanged. Input sizes of $1024$, $768$, and $512$ pixels produce $32\times32$, $24\times24$, and $16\times16$ Qwen visual grids, respectively; the downstream latent and SAM decoding path remains fixed. We evaluate on the RefCOCO ``unc'' val, testA, and testB splits. Table~\ref{tab:resolution_sensitivity} reports percentages rounded to two decimals.
+
+\begin{table}[!t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}
+  \renewcommand{\arraystretch}{0.98}
+  \caption{Sensitivity to Qwen input resolution on RefCOCO. The checkpoint and all model parameters are fixed; only the Qwen image size changes. Values are gIoU and cIoU (\%).}
+  \label{tab:resolution_sensitivity}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{c|cc|cc|cc}
+    \toprule
+    \multirow{2}{*}{Qwen input size} & \multicolumn{2}{c|}{val} & \multicolumn{2}{c|}{testA} & \multicolumn{2}{c}{testB} \\
+    & gIoU & cIoU & gIoU & cIoU & gIoU & cIoU \\
+    \midrule
+    $1024$ & 85.64 & 85.66 & 86.24 & 86.56 & 83.78 & 83.27 \\
+    $768$  & 82.65 & 83.04 & 83.36 & 83.86 & 80.81 & 80.71 \\
+    $512$  & 78.32 & 79.21 & 79.42 & 80.60 & 76.83 & 77.33 \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+Performance decreases monotonically as the Qwen input becomes smaller. Averaged over the three splits, cIoU falls from $85.16$ at $1024$ pixels to $82.54$ at $768$ pixels and $79.05$ at $512$ pixels. Thus, reducing the input from $1024$ to $768$ costs $2.63$ cIoU points on average, while the further reduction to $512$ costs another $3.49$ points. Since the checkpoint and parameterization are unchanged, this trend measures inference-time resolution sensitivity rather than a change in model capacity. The result supports retaining the $1024$-pixel Qwen input for the reported model, while showing that the same model remains functional at lower resolutions with a predictable accuracy trade-off.
+
+\subsection{Latency measurement}
+\label{sec:app_latency}
+
+Model-side latency is measured in a single process on one RTX~4090D, never under distributed launch, after $30$ warm-up iterations. The timer brackets one call to the inference entry point, synchronizes the device before and after, and covers tensor preparation, the MLLM forward pass, the latent-to-prompt adapter, and the SAM image encoder and mask decoder. JPEG decoding and the PIL resize that builds the $1024\times1024$ canvas happen before the timer starts and are excluded; they are also excluded from the baseline numbers, which are the authors' own reports.
+
+\section{Latent space diagnostics}
+\label{sec:appendix_latent}
+
+This appendix reports the distribution of student--teacher latent alignment and three probes of the spatially organized, graded student representation. \Cref{fig:latent-diagnostics} presents the
+distributions of student--teacher cosine
+similarity and relative latent error,
+together with their correlations with
+image-free mask reconstruction quality.
+
+\subsection{Dataset-level latent alignment}
+\label{sec:latent_diagnostics}
+
+To characterize latent alignment, we evaluate student--teacher agreement on the RefCOCO validation set ($N=10{,}834$). The cosine similarity is concentrated near one (mean $0.976$), and the relative latent error is concentrated near zero (mean $0.112$), showing that the student closely reproduces the teacher representation for most examples. The per-instance image-free-head IoU increases with latent cosine similarity (Pearson $r=0.800$, Spearman $\rho=0.615$) and decreases with relative latent error (Pearson $r=-0.756$, Spearman $\rho=-0.460$). These associations quantify how latent agreement relates to image-free reconstruction quality.
+
+\begin{figure}[!t]
+  \centering
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{fig/03a_cosine_similarity_distribution.pdf}
+    \subcaption{Cosine similarity distribution.}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{fig/03b_relative_latent_l2_distribution.pdf}
+    \subcaption{Relative latent $\ell_2$ error.}
+  \end{subfigure}
+
+  \vspace{2pt}
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{fig/03c_cosine_vs_head_ciou.pdf}
+    \subcaption{Cosine similarity vs. per-instance image-free-head IoU.}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{fig/03d_relative_l2_vs_head_ciou.pdf}
+    \subcaption{Relative error vs. per-instance image-free-head IoU.}
+  \end{subfigure}
+  \caption{Student--teacher latent alignment on the RefCOCO val set ($N=10{,}834$). (a) Cosine similarity and (b) relative $\ell_2$ error distributions; (c,d) their relation to the per-instance image-free-head IoU.}
+  \label{fig:latent-diagnostics}
+\end{figure}
+
+\subsection{The latent has graded decoding behavior}
+\label{sec:latent_continuity}
+
+The interface provides a spatially organized, graded latent. We test this property on the RefCOCO validation set with three probes that reuse the frozen student and teacher.
+
+\paragraph{The decoder depends on the latent.}
+Replacing the student latent with a null tensor reduces cIoU from $85.66$ to $11.67$ (Fig.~\ref{fig:continuity}a), showing that the decoder uses the spatial latent as a primary source of mask information.
+\begin{figure}[!t]
+	\centering
+	\includegraphics[width=0.98\linewidth]{fig/plot_continuity.pdf}
+\caption{The student latent behaves as a graded coordinate. (a) Nullifying the latent reduces cIoU, while quantization to $16$ or more levels leaves it unchanged and $4$ levels reduce it by $0.26$; the response forms a broad plateau. (b) Interpolating along the sphere from the student latent to the teacher latent raises accuracy monotonically ($r=0.99$ with $t$), so intermediate latents decode to intermediate masks. The dashed line is a monotonic increasing reference. Both decoders show the same behaviour.}
+	\label{fig:continuity}
+\end{figure}
+
+\paragraph{The decoder responds to finite-resolution latent perturbations.}
+Quantizing every latent element to a finite number of evenly spaced values gives the sweep in Table~\ref{tab:quantization}. The SAM path remains on a broad accuracy plateau from $4$ to $256$ levels, while the image-free head shows the same behavior at the evaluated levels. The null condition provides the corresponding no-latent reference.
+
+\begin{table}[t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{4.0pt}
+  \renewcommand{\arraystretch}{0.96}
+  \caption{Inference-time probes of the student latent on RefCOCO val. The same frozen checkpoint is evaluated after changing only the latent representation.}
+  \label{tab:quantization}
+  \begin{tabular}{lcc}
+    \toprule
+    Probe & SAM cIoU & Image-free head cIoU \\
+    \midrule
+    null & 11.67 & 1.85 \\
+    4 levels & 85.40 & 84.07 \\
+    8 levels & 85.57 & -- \\
+    16 levels & 85.61 & 84.41 \\
+    64 levels & 85.61 & -- \\
+    256 levels (full) & \best{85.66} & \best{84.42} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Teacher-latent reconstruction under noise.}
+Before student training, we evaluate the Stage-I teacher latent through both the image-conditioned SAM path and the image-free mask head on the RefCOCO validation set. We add zero-mean perturbations with standard deviation $\sigma$ to the normalized latent, decode the perturbed latent, and threshold the predictions at $0.55$. Every setting uses the same $760$ validation examples. The clean values are $98.45$ and $98.37$ gIoU for the SAM and image-free-head paths, respectively; the corresponding drops remain gradual as $\sigma$ increases (Table~\ref{tab:teacher_noise}).
+
+\begin{table}[t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{3.5pt}
+  \renewcommand{\arraystretch}{0.96}
+  \caption{Stage-I teacher-latent reconstruction under Gaussian latent noise on RefCOCO val. Values are gIoU (\%); $\Delta$ is measured relative to the clean latent ($\sigma=0$).}
+  \label{tab:teacher_noise}
+  \begin{tabular}{c|cc|cc}
+    \toprule
+    $\sigma$ & SAM gIoU & Image-free head gIoU & $\Delta$ SAM & $\Delta$ head \\
+    \midrule
+    0.0 & 98.45 & 98.37 & 0.00 & 0.00 \\
+    0.1 & 98.39 & 98.31 & -0.06 & -0.06 \\
+    0.2 & 98.24 & 98.14 & -0.21 & -0.24 \\
+    0.3 & 98.02 & 97.88 & -0.43 & -0.49 \\
+    0.4 & 97.77 & 97.58 & -0.68 & -0.80 \\
+    0.5 & 97.47 & 97.19 & -0.98 & -1.18 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{The latent space is geodesically ordered.}
+We interpolate on the sphere from the student latent to the teacher latent, $z_t=\mathrm{slerp}(z^S,z^T;t)$, and decode every point with the remaining inputs held fixed. Of the $10{,}834$ examples, $97.7\%$ have non-decreasing per-instance IoU as $t$ grows. The mean per-instance IoU (gIoU) closes a fraction of the endpoint gap that rises smoothly from $0.199$ at $t{=}0.25$ to $0.892$ at $t{=}0.75$, and correlates with $t$ at $r=0.99$ (Fig.~\ref{fig:continuity}b); the aggregate cIoU curves shown in the figure exhibit the same increasing trend. The response is mildly S-shaped, and we describe it as monotone and smooth.
+
+The same three behaviours appear on the image-free head, which never touches SAM. Together they show that PLAS exposes a spatially organized, graded latent and defers the final mask decision to the decoder.

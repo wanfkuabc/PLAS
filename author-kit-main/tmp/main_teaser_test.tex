@@ -1,0 +1,41 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage[review]{cvpr}
+
+\input{preamble}
+
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+\usepackage[pagebackref,breaklinks,colorlinks,allcolors=cvprblue]{hyperref}
+
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{placeins}
+
+\def\paperID{*****}
+\def\confName{CVPR}
+\def\confYear{2027}
+
+\title{PLAS: Progressive Latent Alignment with Parallel Mask-Latent Prediction for Referring Image Segmentation}
+
+\author{First Author\ Institution1}
+
+\begin{document}
+	\crefname{algorithm}{Algorithm}{Algorithms}
+	\maketitle
+
+	\begin{strip}
+	\centering
+	\includegraphics[width=\linewidth]{fig/overview.pdf}
+	\captionsetup{hypcap=false}
+	\captionof{figure}{Overview of PLAS and its accuracy--efficiency trade-off. Existing interfaces either compress dense spatial geometry into fixed token embeddings or discretize it as coordinates or patch decisions. PLAS employs parallel spatial readout to predict a continuous, mask-aligned spatial latent in a single MLLM forward pass. The predicted latent is transformed into a dense prompt for image-conditioned SAM decoding, preserving continuous spatial refinement.}
+	\captionsetup{hypcap=true}
+	\label{fig:overview}
+	\end{strip}
+
+	\input{sec/0_abstract}
+
+	This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour. This is a placeholder for the introduction text to observe float behaviour.
+
+\end{document}

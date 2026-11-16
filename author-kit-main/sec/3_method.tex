@@ -1,0 +1,222 @@
+\begin{figure*}[t]
+	\centering
+	\includegraphics[width=0.8\linewidth,trim=18 18 18 18,clip]{fig/architecture.pdf}
+\caption{Overview of PLAS. Learnable multimodal readout tokens extract segmentation-aware features in parallel; Stage~I teacher pretraining followed by Stage~II-A warmup and Stage~II-B adaptation transfers mask-level geometry to the student; and explicit mask-latent alignment connects the parallel readouts to a dense SAM prompt. Dashed boxes are frozen.}
+	\label{fig:method}
+\end{figure*}
+\section{Method}
+\label{sec:method}
+
+\subsection{Problem formulation and overview}
+\label{sec:overview}
+
+Given an image $I$ and a referring expression $e$, RIS predicts a binary mask $y$ for the described object. The visual--language model contains rich visual--textual interactions, whereas segmentation requires a dense and spatially precise output. PLAS connects these two spaces with a learnable multimodal feature readout, a compact normalized mask latent, and an explicit latent-alignment objective.
+
+As illustrated in \cref{fig:method}, PLAS contains three coupled components: a mask-latent teacher, a multimodal student with learnable spatial readout tokens, and a unified latent--prompt bridge $F$. The teacher derives a geometric target from each ground-truth mask, the readout mechanism extracts segmentation-aware features from the MLLM in a single parallel forward pass, and the alignment objective transfers the teacher geometry to those features. The bridge then converts the aligned latent into a dense prompt for SAM. The training proceeds from Stage~I teacher construction to Stage~II-A latent readout warmup and then Stage~II-B image-conditioned adaptation.
+
+\subsection{Learnable multimodal readout and latent--prompt interface}
+\label{sec:interface}
+
+We resize each ground-truth mask to a $256\times256$ canvas. Let $z^T$ denote the teacher latent, $z^S$ the student latent, and $S$ the frozen SAM-H image feature. The mask encoder followed by normalization produces
+\begin{equation}
+  z^T=\operatorname{Norm}\!\left(E_m(y)\right), \qquad
+  z^T\in\mathbb{R}^{32\times32\times32}.
+  \label{eq:teacher_latent}
+\end{equation}
+The normalization rescales the channel vector at each spatial location to a fixed root-mean-square magnitude, which makes the target easier to regress and reduces scale variation across masks.
+
+The frozen SAM-H image encoder extracts dense features using the promptable design of SAM \cite{Kirillov2023SAM}:
+\begin{equation}
+  S=E_{\mathrm{SAM}}(I), \qquad S\in\mathbb{R}^{256\times64\times64}.
+  \label{eq:sam_image_feature}
+\end{equation}
+The unified bridge $F$ contains the latent projection, text--spatial readout, dense-prompt generator, and image-prompt calibration layers. Its prompt branch is
+\begin{equation}
+  \Delta p=F_{\mathrm{prompt}}(z,S),
+  \label{eq:prompt_interface}
+\end{equation}
+where $z$ is either a teacher or student latent, and the SAM mask decoder produces a mask from $(S,\Delta p)$. During training an image-free mask head $D_m$ also reconstructs a mask directly from $z$; it is discarded at inference. The readout mechanism and the latent--prompt bridge therefore separate semantic--spatial integration from final mask decoding: the MLLM supplies multimodal hidden states, while the spatial latent carries dense geometry to the image-conditioned mask decoder.
+
+\subsection{Progressive training}
+\label{sec:training}
+
+\paragraph{Stage I: Mask-latent teacher pretraining.}
+\label{sec:stage1}
+
+Stage~I transfers mask-level geometric knowledge into a reusable teacher latent. We decode the teacher latent with the image-free head and with the image-conditioned SAM path,
+\begin{align}
+  \hat y^T_{\mathrm{head}}&=D_m(z^T), \qquad
+  \hat y^T_{\mathrm{SAM}}=D_{\mathrm{SAM}}(S,\Delta p^T),\notag\\
+  \Delta p^T&=F_{\mathrm{prompt}}(z^T,S).
+  \label{eq:teacher_head}
+\end{align}
+To make both paths tolerant to student regression error, we perturb the latent as
+\begin{equation}
+  \widetilde z^T=\operatorname{Norm}(z^T+\epsilon),
+  \label{eq:noisy_latent}
+\end{equation}
+with $\sigma_{\max}$ held at $0$ for the first $30\%$ of Stage~I and then ramping linearly to $0.4$ over the remaining steps. Noisy and clean latents are both used for image-free reconstruction; the noisy latent is used for the robust SAM path. The mask encoder $E_m$, head $D_m$, and bridge $F$ are optimized, the SAM mask decoder is held fixed for a warmup pass and then optionally tuned at a smaller learning rate, and the SAM image encoder stays frozen. The objective is
+\begin{align}
+  \mathcal{L}_{\mathrm{I}}={}&
+  \mathcal{L}_{\mathrm{SAM\text{-}BCE}}(\widetilde z^T)
+  +\mathcal{L}_{\mathrm{SAM\text{-}Dice}}(\widetilde z^T) \notag\\
+  &+\mathcal{L}_{\mathrm{head\text{-}BCE}}(\widetilde z^T)
+  +\mathcal{L}_{\mathrm{head\text{-}Dice}}(\widetilde z^T) \\
+  &+0.5\!\left[\mathcal{L}_{\mathrm{head\text{-}BCE}}(z^T)
+  +\mathcal{L}_{\mathrm{head\text{-}Dice}}(z^T)\right], \notag
+  \label{eq:stage1_loss}
+\end{align}
+each term evaluated after decoding the indicated latent. The noisy terms enlarge the valid decoding neighborhood around the target, while the clean-head terms preserve reconstruction quality.
+
+\paragraph{Stage II-A: Student latent warmup.}
+\label{sec:stage2}
+
+Stage~II-A instantiates the learnable multimodal feature readout. It teaches the student to predict $z^T$ from the image--expression pair, while the Stage-I teacher and every SAM component are frozen. A MLLM backbone \cite{Bai2025Qwen3VL,Liu2023LLaVA} encodes the pair together with the 256 learnable readout tokens appended as the assistant turn,
+\begin{equation}
+  H=Q(I,e;\theta_Q),
+  \label{eq:student_hidden}
+\end{equation}
+so all readout states come from a single forward pass: no logit, sampling step, or stopping criterion, and no discrete output leaves the MLLM. The readout binds one token to one cell of a $16\times16$ grid and fuses hidden states from layers $-1$, $-9$, and $-17$ with learned weights, $R(\cdot)$; a bidirectional block then applies self-attention and a 2-D residual convolution over all 256 cells, supplying the two-way context that causal readout alone cannot. The adapter additionally gates the visual tokens of the same pass onto the grid, so the readout aggregates both visual and textual evidence before predicting the latent:
+\begin{equation}
+  z^S=F_{\mathrm{latent}}\!\left(R(H),V(H)\right), \qquad
+  z^S\in\mathbb{R}^{32\times32\times32},
+  \label{eq:student_latent}
+\end{equation}
+where $V(H)$ denotes those visual states. The student latent is channel-wise normalized
+using the same normalization as the teacher latent,
+ensuring a fixed per-location $\ell_2$ norm of
+$\sqrt{32}$ for both representations. Text--spatial cross-attention conditions every cell on all positions that are neither image nor readout tokens, so the instruction and chat-template tokens act alongside the expression itself. During warmup $z^S$ is decoded only by the frozen image-free head, and the image-conditioned branch stays inactive until latent prediction is reliable. We update the LoRA parameters, grid readout, latent projection, and text--spatial attention, with the teacher latent detached. This parallel readout is the semantic feature extraction stage of PLAS; the following explicit alignment objective supplies its pixel-level geometric target:
+\begin{equation}
+  \mathcal{L}_{\mathrm{II}}=
+  \mathcal{L}_{\mathrm{latent}}+0.1\,\mathcal{L}_{\mathrm{rel}}
+  +\mathcal{L}_{\mathrm{head\text{-}BCE}}(z^S)
+  +\mathcal{L}_{\mathrm{head\text{-}Dice}}(z^S),
+  \label{eq:stage2_loss}
+\end{equation}
+\begin{equation}
+  \mathcal{L}_{\mathrm{latent}}=\operatorname{MSE}(z^S,z^T), \quad
+\mathcal{L}_{\mathrm{rel}}=\mathbb{E}\!\left[
+  \frac{\lVert z^S-z^T\rVert_2}{\lVert z^T\rVert_2+\varepsilon}\right].
+\label{eq:alignment_losses}
+\end{equation}
+
+\paragraph{Explicit mask-latent alignment.}
+Since both student and teacher latents are
+channel-wise normalized, the per-channel MSE
+is equivalent to twice the cosine distance
+at each spatial position.
+The relative-error term penalizes the same
+latent discrepancy using a normalized,
+non-squared $\ell_2$ distance.
+Although both terms share the same alignment
+target, their different residual penalties
+provide complementary optimization behavior.
+
+
+\paragraph{Stage II-B: Image-conditioned task adaptation.}
+\label{sec:stage2b}
+
+Stage~II-B starts from the Stage-II-A checkpoint and performs image-conditioned task adaptation. The student again predicts $z^S$ from $(I,e)$ while the frozen SAM image encoder extracts $S$, and the prompt branch converts the explicitly aligned latent into an image-conditioned dense prompt:
+\begin{equation}
+  \Delta p^S=F_{\mathrm{prompt}}(z^S,S), \qquad
+  \ell^S=D_{\mathrm{SAM}}(S,\Delta p^S),
+  \label{eq:student_prompt}
+\end{equation}
+where $\ell^S$ denotes the logits before resize and threshold. We update the student LoRA and readout layers, latent and prompt branches, image-prompt calibration layers, and selected upper SAM mask-decoder layers; the teacher latent serves only as a supervision target. The default student configuration fine-tunes
+selected upper SAM mask-decoder layers, while full-decoder tuning is evaluated as an ablation. The objective is
+\begin{align}
+  \mathcal{L}_{\mathrm{II-B}}={}&
+  \mathcal{L}_{\mathrm{latent}}+0.1\,\mathcal{L}_{\mathrm{rel}} \\
+  &+2.0\,\mathcal{L}_{\mathrm{mask\text{-}BCE}}
+  +2.0\,\mathcal{L}_{\mathrm{mask\text{-}Dice}}.
+  \label{eq:stage2b_loss}
+\end{align}
+
+\subsection{Inference}
+\label{sec:inference}
+
+At inference only $I$ and $e$ are provided. As summarized in \cref{alg:plas-inference}, the student encodes the pair and predicts $z^S$ by \cref{eq:student_latent}, the frozen SAM image encoder extracts $S$, and the adapter combines the two into $\Delta p^S$ by \cref{eq:student_prompt}. The mask decoder produces logits, which are resized, thresholded, and post-processed at the original resolution. The teacher, ground-truth masks, auxiliary head, and external point or box prompts are not used.
+
+\begin{algorithm}[t]
+	\caption{PLAS Inference}
+	\label{alg:plas-inference}
+	
+	\SetKwInput{Require}{Require}
+	\SetKwInput{Ensure}{Ensure}
+	\SetKw{Return}{return}
+	
+	\Require{
+		Test set $\mathcal{D}_{\mathrm{test}}$;
+		pretrained Qwen3-VL and SAM-H backbones;
+		Stage-I Teacher checkpoint $\Theta_{\mathrm{T}}^{1}$;
+		final Stage-II-B Student checkpoint $\Theta_{\mathrm{S}}^{2B}$;
+		256 grid readout tokens $G=\{g_j\}_{j=0}^{255}$;
+		threshold $\tau$
+	}
+	
+	\Ensure{
+		Predicted masks $\{\hat{y}_i\}_{i=1}^{N}$
+	}
+	
+	$\Theta_{\mathrm{MLLM}}
+	\leftarrow
+	[\Theta_{\mathrm{S}}^{2B}]_{\mathrm{MLLM}}$\;
+	
+	$\Theta_{\mathrm{MD}}
+	\leftarrow
+	\mathrm{Compose}\!\left(
+	[\Theta_{\mathrm{T,MD}}^{1}]_{\overline{\mathcal{U}}},
+	[\Theta_{\mathrm{S,MD}}^{2B}]_{\mathcal{U}}
+	\right)$\;
+	
+	\For{each $(I_i,e_i)\in\mathcal{D}_{\mathrm{test}}$}{
+		
+		$\mathcal{X}_i
+		\leftarrow
+		\mathrm{Prompt}(I_i,e_i,G)$\;
+		
+		$\{H_i^{(l)}\}_{l\in\mathcal{L}}
+		\leftarrow
+		\mathrm{Qwen3\text{-}VL}(\mathcal{X}_i)$\;
+		
+		$F_i
+		\leftarrow
+		\mathrm{ReadoutFusion}
+		\left(\{H_i^{(l)}\}_{l\in\mathcal{L}},I_i,e_i\right)$\;
+		
+		$z_i^S
+		\leftarrow
+		\mathrm{LatentAdapter}(F_i)$\;
+		
+		$S_i
+		\leftarrow
+		\mathrm{SAM\text{-}H\ ImageEncoder}(I_i)$\;
+		
+		$P_i
+		\leftarrow
+		\mathrm{PromptAdapter}(z_i^S)$\;
+		
+		$\widetilde{P}_i
+		\leftarrow
+		\mathrm{ImageConditionedCalibration}(P_i,S_i)$\;
+		
+		$\ell_i^{256}
+		\leftarrow
+		\mathrm{SAM\text{-}H\ MaskDecoder}(S_i,\widetilde{P}_i)$\;
+		
+		$\ell_i^{I}
+		\leftarrow
+		\mathrm{SAM\text{-}Postprocess}
+		\left(\ell_i^{256},\mathrm{size}(I_i)\right)$\;
+		
+		$\hat{y}_i
+		\leftarrow
+		\mathbb{I}\left[\sigma(\ell_i^{I})\geq\tau\right]$\;
+		
+	}
+	
+	\Return{$\{\hat{y}_i\}_{i=1}^{N}$}\;
+	
+\end{algorithm}
+
+Here $\mathcal{U}$ denotes the decoder blocks made trainable in Stage~II-B (the final transformer layer, final token-to-image attention and its norm, output upscaling, first hypernetwork MLP, and mask tokens). $\mathrm{Compose}$ loads the remaining frozen decoder blocks from the Stage-I checkpoint and the blocks in $\mathcal{U}$ from the Stage-II-B checkpoint. The set $G$ contains the 256 spatial readout tokens arranged on the $16\times16$ grid used by $\mathrm{Prompt}(I_i,e_i,G)$.

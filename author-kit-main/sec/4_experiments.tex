@@ -1,0 +1,401 @@
+\section{Experiments}
+\label{sec:experiments}
+
+\newcommand{\best}[1]{\textbf{#1}}
+\newcommand{\second}[1]{\underline{#1}}
+
+\subsection{Experimental setup}
+\label{sec:exp_setup}
+
+\paragraph{Datasets.}
+We evaluate on four standard referring segmentation benchmarks. RefCOCO and RefCOCO+ contain short expressions collected for referring-expression comprehension, with RefCOCO+ suppressing explicit location words; RefCOCOg contains longer, compositional descriptions \cite{Yu2016ModelingContext,Mao2016RefCOCOg}. We also evaluate on gRefCOCO, which extends the setting to multiple referred objects and expressions with no valid target \cite{Liu2023GRES}. We use the conventional validation and test splits: val, testA, and testB for RefCOCO and RefCOCO+, val and test for RefCOCOg, and val, testA, and testB for gRefCOCO.
+
+
+\paragraph{Training details.}
+We train PLAS on six NVIDIA RTX~4090D GPUs, each with 24~GB of memory. The per-device batch size is 1, and gradients are accumulated over 16 steps, yielding an effective batch size of 96 under data-parallel training. We clip the global gradient norm to 1.0. The MLLM is adapted with parameter-efficient LoRA fine-tuning while the original Qwen weights remain frozen, following the low-rank adaptation strategy of Hu et al.~\cite{Hu2022LoRA}. We use LoRA rank $r=64$, scaling factor $\alpha=128$, dropout 0.05, and no bias term. The full recipe of teacher pretraining and student adaptation takes about $60$ hours on this six-GPU node, roughly $2.5$ days of wall-clock time and $360$ GPU-hours in total.
+
+\subsection{Results on generalized referring segmentation}
+\label{sec:gref_results}
+
+\begin{table}[t]
+	\centering
+	\scriptsize
+	\setlength{\tabcolsep}{3.0pt}
+	\renewcommand{\arraystretch}{0.94}
+	\caption{Comparison on gRefCOCO. We report cIoU, gIoU, and N-acc (\%). N-acc measures the proportion of no-target expressions correctly predicted as empty masks. Bold and underline indicate the best and second-best values, respectively.}
+	\label{tab:gref}
+	\resizebox{\linewidth}{!}{%
+		\begin{tabular}{@{}lccc|ccc|ccc@{}}
+			\toprule
+			\multirow{2}{*}{Method} & \multicolumn{3}{c|}{val} & \multicolumn{3}{c|}{testA} & \multicolumn{3}{c}{testB} \\
+			& cIoU & gIoU & N-acc & cIoU & gIoU & N-acc & cIoU & gIoU & N-acc \\
+			\midrule
+			\multicolumn{10}{l}{\itshape Method without LLMs} \\
+			MattNet~\cite{Yu2018MAttNet} & 47.50 & 48.20 & 41.15 & 58.60 & 59.30 & 44.04 & 45.30 & 46.10  & 41.32 \\
+			LTS~\cite{Jing2021LTS} & 52.30 & 52.70 & -- & 61.80 & 62.60 & -- & 49.90 & 50.40  & -- \\
+			VLT~\cite{Ding2021VLT} & 52.50 & 52.00 & 47.17 & 62.10 & 63.20 & 48.74 & 50.50 & 50.80  & 47.82 \\
+			CRIS~\cite{Wang2022CRIS} & 55.30 & 56.20 & -- & 63.80 & 63.40 & -- & 51.00 & 51.70  & -- \\
+			LAVT~\cite{Yang2022LAVT} & 57.60 & 58.40 & 49.32 & 65.30 & 65.90 & 49.25 & 55.00 & 55.80  & 48.46 \\
+			ReLA~\cite{Liu2023GRES} & 62.40 & 63.60 & 56.37 & 69.30 & 70.00 & 59.02 & 59.90 & 61.00  & 58.40 \\
+			\midrule
+			\multicolumn{10}{l}{\itshape Latent Query Alignment Method} \\
+			LISA-7B~\cite{Lai2024LISA} & 61.70 & 61.60 & 54.67 & 68.50 & 66.20 & 50.01 & 60.60 & 58.80  & 51.91 \\
+			LISA-13B~\cite{Lai2024LISA} & 62.90 & 63.40 & 55.25 & 69.60 & 68.10 & 52.16 & 62.20 & 61.80  & 56.15 \\
+			GSVA-7B~\cite{Xia2024GSVA} & 63.30 & 66.50 & 62.43 & 69.90 & 71.10 & 65.31 & 60.50 & 62.20  & 60.56 \\
+			GSVA-13B~\cite{Xia2024GSVA} & 64.00 & 68.00 & 65.36 & 70.50 & 71.80 & 67.25 & 61.30 & 63.80  & 63.11 \\
+			GroundHog-7B~\cite{Zhang2024GROUNDHOG} & -- & 66.70 & -- & -- & -- & -- & -- & --  & -- \\
+			LaSagnA-7B~\cite{Wei2024LaSagnA} & 38.10 & 32.40 & -- & 50.40 & 47.30 & -- & 42.10 & 38.90  & -- \\
+			OMG-LLaVA-7B~\cite{Zhang2024OMGLLaVA} & 39.30 & 36.10 & -- & 52.40 & 50.10 & -- & 43.70 & 42.20  & -- \\
+			LIRA-8B~\cite{Li2025LIRA} & 40.90 & 36.70 & -- & 52.40 & 50.40 & -- & 44.90 & 42.40  & -- \\
+			HiMTok-8B~\cite{Wang2025HiMTok} & 70.40 & 72.10 & -- & 74.90 & 73.50 & -- & 72.00 & 71.70  & -- \\
+			UniRES-7B~\cite{Wang2024UniRES} & 69.90 & 74.40 & -- & 74.50 & 76.00 & -- & 66.60 & 69.80  & -- \\
+			RAS-13B~\cite{Cao2025RAS} & 70.50 & 74.60 & -- & 77.00 & 77.50 & -- & 67.90 & 69.40  & -- \\
+			\midrule
+			\multicolumn{10}{l}{\itshape Textual Localization Readout Method} \\
+			SAM4MLLM-7B~\cite{Chen2024SAM4MLLM} & 67.80 & 71.90 & -- & 72.20 & 74.20 & -- & 63.40 & 65.30  & -- \\
+			Text4Seg-7B~\cite{Lan2025Text4Seg} & 67.90 & 73.60 & -- & 72.80 & 74.10 & -- & 64.80 & 66.10  & -- \\
+			Text4Seg-13B~\cite{Lan2025Text4Seg} & 69.80 & 74.80 & -- & 74.30 & 75.10 & -- & 67.10 & 68.00  & -- \\
+			\midrule
+			\multicolumn{10}{l}{\itshape Interpretable Alignment and All-mask Methods} \\
+			STAMP-2B~\cite{Liu2026STAMP} & 72.20 & 76.40 & -- & 75.70 & 76.50 & -- & \second{73.40} & 69.80  & -- \\
+			STAMP-7B~\cite{Liu2026STAMP} & \second{73.60} & \second{77.60} & -- & 77.20 & 77.60 & -- & 71.60 & 71.40  & -- \\
+			SegCompass-7B~\cite{Lu2026SegCompass} & 70.60 & 75.00 & -- & 72.60 & 76.10 & -- & 66.70 & 68.20  & -- \\
+			SegCompass-13B~\cite{Lu2026SegCompass} & 72.20 & 76.80 & -- & \second{77.30} & \second{77.70} & -- & 72.40 & \second{71.90}  & -- \\
+			\midrule
+			\rowcolor{gray!15}
+			\textbf{PLAS (Ours)} & \best{76.28} & \best{83.99} & \best{84.17} & \best{79.80} & \best{80.35} & \best{80.10} & \best{74.69} & \best{75.24}  & \best{73.19} \\
+			\bottomrule
+	\end{tabular}}
+\end{table}
+
+As shown in \cref{tab:gref}, PLAS achieves
+the best reported cIoU and gIoU values
+across all three gRefCOCO splits. For each expression, PLAS predicts one binary mask; multi-target expressions are supervised with the union of all referred instances, while no-target expressions use an all-zero target mask. The four training sources are sampled with equal per-epoch quotas, and gRefCOCO positive and empty examples use a $3{:}1$ ratio; the BCE and Dice terms for empty examples are weighted by $0.5$. At inference, every split uses the same sigmoid threshold of $0.55$, and a prediction is empty when no pixel survives thresholding. The baseline N-acc entries follow the gRefCOCO benchmark table reported by GSVA and its cited GRES protocol \cite{Xia2024GSVA,Liu2023GRES}. Under the same empty-mask rule, PLAS obtains N-acc values of $84.17$, $80.10$, and $73.19$ on val, testA, and testB, respectively.
+
+
+\subsection{Main results on single-object RIS}
+\label{sec:single_results}
+
+\begin{table}[t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{1.7pt}
+  \renewcommand{\arraystretch}{0.94}
+  \caption{Comparison on RefCOCO, RefCOCO+, and RefCOCOg using cIoU (\%). The best and second-best values in each column are shown in bold and underline, respectively.}
+  \label{tab:main_ciou}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lccc|ccc|cc}
+    \toprule
+    \multirow{2}{*}{Method} & \multicolumn{3}{c|}{RefCOCO} & \multicolumn{3}{c|}{RefCOCO+} & \multicolumn{2}{c}{RefCOCOg} \\
+    & val & testA & testB & val & testA & testB & val & test \\
+    \midrule
+    \multicolumn{9}{l}{\itshape Method without LLMs} \\
+    VLT~\cite{Ding2021VLT} & 67.50 & 70.50 & 65.20 & 56.30 & 61.00 & 50.10 & 55.00 & 57.70 \\
+    CRIS~\cite{Wang2022CRIS} & 70.50 & 73.20 & 66.10 & 62.30 & 68.10 & 53.70 & 59.90 & 60.40 \\
+    LAVT~\cite{Yang2022LAVT} & 72.70 & 75.80 & 68.80 & 62.10 & 68.40 & 55.10 & 61.20 & 62.10 \\
+    ReLA~\cite{Liu2023GRES} & 73.80 & 76.50 & 70.20 & 66.00 & 71.00 & 57.70 & 65.00 & 66.00 \\
+    X-Decoder~\cite{Zou2023XDecoder} & -- & -- & -- & -- & -- & -- & 64.60 & -- \\
+    SEEM~\cite{Zou2023SEEM} & -- & -- & -- & -- & -- & -- & 65.70 & -- \\
+    \midrule
+    \multicolumn{9}{l}{\itshape Latent Query Alignment Method} \\
+    LISA-7B~\cite{Lai2024LISA} & 74.90 & 79.10 & 72.30 & 65.10 & 70.80 & 58.10 & 67.90 & 70.60 \\
+    LISA-13B~\cite{Lai2024LISA} & 76.00 & 78.80 & 72.90 & 65.00 & 70.20 & 58.10 & 69.50 & 70.50 \\
+    GSVA-7B~\cite{Xia2024GSVA} & 75.10 & 78.60 & 71.70 & 68.50 & 73.90 & 61.30 & 70.30 & 71.70 \\
+    GSVA-13B~\cite{Xia2024GSVA} & 75.30 & 79.10 & 72.10 & 68.90 & 74.00 & 61.90 & 70.70 & 71.90 \\
+    GroundHog-7B~\cite{Zhang2024GROUNDHOG} & 78.50 & 79.90 & 75.70 & 70.50 & 75.00 & 64.90 & 74.10 & 74.60 \\
+    LaSagnA-7B~\cite{Wei2024LaSagnA} & 76.80 & 78.70 & 73.80 & 66.40 & 70.60 & 60.10 & 70.60 & 71.90 \\
+    OMG-LLaVA-7B~\cite{Zhang2024OMGLLaVA} & 78.00 & 80.30 & 74.10 & 69.10 & 73.10 & 63.00 & 72.90 & 72.90 \\
+    LIRA-8B~\cite{Li2025LIRA} & 81.80 & 83.40 & 78.10 & 76.30 & 81.10 & 70.50 & 78.40 & 78.20 \\
+    HiMTok-8B~\cite{Wang2025HiMTok} & \second{85.90} & 86.30 & \second{83.90} & \second{80.50} & 83.70 & 76.40 & 80.10 & 80.90 \\
+    UniRES-7B~\cite{Wang2024UniRES} & 80.80 & 83.00 & 75.80 & 71.60 & 76.00 & 64.40 & 73.80 & 74.10 \\
+    RAS-13B~\cite{Cao2025RAS} & 81.00 & 83.50 & 79.00 & 75.10 & 80.00 & 70.30 & 76.00 & 77.50 \\
+    X-SAM-3.8B~\cite{Wang2025XSAM} & 85.10 & 87.10 & 83.40 & 78.00 & 81.00 & 74.40 & \second{83.80} & \best{83.90} \\
+    \midrule
+    \multicolumn{9}{l}{\itshape Textual Localization Readout Method} \\
+    SAM4MLLM-7B~\cite{Chen2024SAM4MLLM} & 79.60 & 82.80 & 76.10 & 73.50 & 77.80 & 65.80 & 74.50 & 75.60 \\
+    Seg-R1-7B ~\cite{You2025SegR1} & 74.30 & 78.70 & 67.60 & 62.60 & 70.90 & 57.90 & 71.00 & 71.40 \\
+    Seg-Zero-7B ~\cite{Liu2025SegZero} & -- & 80.30 & -- & -- & 76.20 & -- & -- & 72.60 \\
+    VisionReasoner-7B ~\cite{Liu2026VisionReasoner} & -- & 78.90 & -- & -- & 74.90 & -- & -- & 71.30 \\
+    SAM-R1-7B ~\cite{Huang2025SAMR1} & -- & 79.20 & -- & -- & 74.70 & -- & -- & 73.10 \\
+    Text4Seg-7B~\cite{Lan2025Text4Seg} & 79.30 & 81.90 & 76.20 & 72.10 & 77.60 & 66.10 & 72.10 & 73.90 \\
+    Text4Seg-13B~\cite{Lan2025Text4Seg} & 80.20 & 82.70 & 77.30 & 73.70 & 78.60 & 67.60 & 74.00 & 75.10 \\
+    \midrule
+    \multicolumn{9}{l}{\itshape Interpretable Alignment and All-mask Methods} \\
+    STAMP-2B~\cite{Liu2026STAMP} & 81.90 & 83.70 & 79.50 & 77.10 & 80.50 & 72.70 & 78.50 & 78.80 \\
+    STAMP-7B~\cite{Liu2026STAMP} & 83.10 & 84.50 & 80.80 & 79.40 & 82.80 & 74.60 & 79.90 & 80.40 \\
+    SegCompass-7B ~\cite{Lu2026SegCompass} & 85.30 & \best{87.50} & 83.60 & 78.30 & \second{84.70} & 76.60 & 82.80 & 81.00 \\
+    SegCompass-13B~\cite{Lu2026SegCompass} & \best{86.30} & \second{87.30} & \best{84.10} & \second{80.50} & 84.60 & \second{76.90} & \best{84.00} & 81.30 \\
+    \midrule
+    \rowcolor{gray!15}
+    \textbf{PLAS (Ours)} & 85.66 & 86.56 & 83.27 & \best{81.94} & \best{85.02} & \best{77.90} & 83.73 & \second{83.77} \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+Table~\ref{tab:main_ciou} shows that PLAS is particularly effective on the expression-driven RefCOCO+ benchmark. Among prior methods, it achieves the best cIoU on all three RefCOCO+ splits, exceeding the strongest reported result by 1.44, 0.32, and 1.00 points on val, testA, and testB, respectively. On RefCOCO, PLAS remains competitive with the strongest large-backbone methods; on RefCOCOg, it ranks third on val and second on test.
+
+
+\subsection{Inference Efficiency}
+\label{sec:efficiency}
+
+Beyond segmentation accuracy, we evaluate the inference efficiency of PLAS. Table~\ref{tab:efficiency_latency} compares model size, input resolution, model-side latency, and reported segmentation accuracy across representative methods. Baseline latencies are drawn from published results, including the NVIDIA A800 benchmarks reported in STAMP, except for HiMTok-8B, for which we measure the latency with its SAM stage removed.  Those baselines were measured on an A800, whose memory bandwidth and dense BF16 throughput are roughly twice those of the RTX 4090D used here, so the reported latency ratios are conservative against PLAS. PLAS achieves a model-side latency of only $0.43$~s per image on a single NVIDIA RTX~4090D, covering the MLLM forward pass, latent-to-prompt adaptation, SAM image encoding, and mask decoding. Under these reported timing measurements, PLAS has the lowest model-side latency: $0.43$~s per image versus $0.70$~s for PixelLM-7B and $1.07$~s for HiMTok-8B, corresponding to latency ratios of $1.63\times$ and $2.49\times$, respectively. 
+\begin{table}[t]
+	\centering
+	\caption{
+		Reported inference efficiency on referring
+		image segmentation.
+		Avg. cIoU denotes the mean cIoU over the
+		eight RefCOCO, RefCOCO+, and RefCOCOg splits.
+		Baseline latencies are measured on
+		NVIDIA A800 80GB GPU.
+		HiMTok (w/o SAM) and PLAS are measured
+		on a single RTX 4090D 24GB GPU.
+		Hardware and inference configurations differ
+		across the two sources.
+	}
+	\label{tab:efficiency_latency}
+	\resizebox{\columnwidth}{!}{
+		\begin{tabular}{lccccc}
+			\toprule
+			Method & Params. & Input
+			& Time (s)$\downarrow$
+			& Hardware
+			& Avg. cIoU (\%)$\uparrow$ \\
+			\midrule
+			
+			LISA-7B
+			& 7B & $336\times336$
+			& 1.10 & A800 & 69.9 \\
+			
+			LISA-13B
+			& 13B & $336\times336$
+			& 1.80 & A800 & 70.1 \\
+			
+			PixelLM-7B
+			& 7B & $448\times448$
+			& 0.70 & A800 & 69.2 \\
+			
+			READ-7B
+			& 7B & $336\times336$
+			& 1.50 & A800  & 71.9 \\
+			
+			Seg-Zero-7B
+			& 7B & $840\times840$
+			& 4.50 & A800  & 74.1 \\
+			
+			SegAgent-7B
+			& 7B & $448\times448$
+			& 15.9 & A800  & 75.4 \\
+			
+			Text4Seg-7B
+			& 7B & $336\times336$
+			& 4.00 & A800 & 74.9 \\
+			
+			STAMP-2B (504)
+			& 2B & $504\times504$
+			& 0.90 & A800 & 77.1 \\
+			
+			STAMP-2B (726)
+			& 2B & $726\times726$
+			& 1.10 & A800 & 78.6 \\
+			
+			STAMP-2B (896)
+			& 2B & $896\times896$
+			& 1.30 & A800 & 79.1 \\
+			
+			STAMP-7B (896)
+			& 7B & $896\times896$
+			& 2.40 & A800 & 80.7 \\
+			
+			HiMTok-8B (w/o SAM)
+			& 8B & $896\times896$
+			& 1.07 & 4090D & 81.6 \\
+			
+			\midrule
+			
+			\rowcolor{gray!15}
+			PLAS (Ours)
+			& 8B & $1024\times1024$
+			& \textbf{0.43}
+			& 4090D 
+			& \textbf{83.5} \\
+			
+			\bottomrule
+		\end{tabular}
+	}
+\end{table}
+
+
+\section{Ablation}
+\subsection{Ablation of the progressive student training}
+\label{sec:stage_ablation}
+
+As shown in Table~\ref{tab:stage_ablation}, we evaluate the effectiveness of progressive
+student training by comparing the full PLAS
+framework with a variant that skips Stage~II-A.
+The latter retains latent alignment and frozen
+image-free mask supervision but proceeds directly
+from the Stage-I initialization to image-conditioned
+task adaptation. The Stage~II-A row represents
+the intermediate latent-warmup checkpoint,
+whereas Stage~II-B denotes the final model
+after image-conditioned adaptation.
+
+\begin{table}[t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{2.0pt}
+  \renewcommand{\arraystretch}{0.96}
+  \caption{Ablation of progressive student training. Results are cIoU (\%). The Stage~II-A row is the latent-warmup checkpoint trained with latent alignment and image-free-head BCE/Dice losses, and evaluated through the deployment SAM path. All configurations are trained for the same number of epochs.}
+  \label{tab:stage_ablation}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lccc|ccc|cc}
+    \toprule
+    \multirow{2}{*}{Training stage} & \multicolumn{3}{c|}{RefCOCO} & \multicolumn{3}{c|}{RefCOCO+} & \multicolumn{2}{c}{RefCOCOg} \\
+    & val & testA & testB & val & testA & testB & val & test \\
+    \midrule
+    latent align., no Stage II-A & 84.14 & 85.36 & 81.52 & 78.90 & 82.56 & 73.11 & 79.55 & 79.89 \\
+    Stage II-A & {84.32} & {85.12} & {81.84} & {80.45} & {83.63} & {75.96} & {81.98} & {82.16} \\
+    Stage II-B & \best{85.66} & \best{86.56} & \best{83.27} & \best{81.94} & \best{85.02} & \best{77.90} & \best{83.73} & \best{83.77} \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+\subsection{Ablation of Readout Placement and Layer Fusion}
+\label{sec:readout_ablation}
+
+To evaluate readout placement and hidden-state fusion, we conduct two controlled ablations. The full PLAS model uses 256 learnable spatial readout tokens inside the MLLM and fuses hidden states from layers $-1$, $-9$, and $-17$. For the external-query control, we remove these tokens from the Qwen input and apply 256 learned $16\times16$ queries after the single Qwen forward; the queries cross-attend to the same three-layer fused hidden states and then use the same latent adapter and SAM path. We retrain both stages for this control with the same data, losses, optimizer, and number of epochs. As shown in Table~\ref{tab:readout_ablation}, the internal readout is consistently better, supporting the benefit of placing the readout tokens inside the multimodal transformer under this matched protocol. We then restrict the internal readout to the final hidden layer. Compared with this single-layer variant, PLAS improves cIoU by $1.32$--$4.36$ points, indicating that hidden states from different depths provide complementary semantic and spatial information.
+
+
+\begin{table}[t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{1.65pt}
+  \renewcommand{\arraystretch}{0.96}
+  \caption{Ablation of readout placement and hidden-state fusion. We report cIoU (\%).}
+  \label{tab:readout_ablation}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lccc|ccc|cc}
+    \toprule
+    \multirow{2}{*}{Configuration} & \multicolumn{3}{c|}{RefCOCO} & \multicolumn{3}{c|}{RefCOCO+} & \multicolumn{2}{c}{RefCOCOg} \\
+    & val & testA & testB & val & testA & testB & val & test \\
+    \midrule
+    External query, $-1,-9,-17$ & 84.00 & 85.09 & 82.03 & 79.29 & 82.30 & 73.04 & 79.55 & 78.32 \\
+    Internal, $-1$ & 84.15 & 85.24 & 81.84 & 78.95 & 82.98 & 73.54 & 79.69 & 79.97 \\
+    \midrule
+    \rowcolor{gray!15}
+    \textbf{Internal, $-1,-9,-17$ (PLAS)} & \best{85.66} & \best{86.56} & \best{83.27} & \best{81.94} & \best{85.02} & \best{77.90} & \best{83.73} & \best{83.77} \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+
+\subsection{Ablation of the Decoding Model}
+\label{sec:decoder_ablation}
+
+To evaluate the effectiveness of the progressive decoding strategy, we compare PLAS with two variants that use either the SAM decoder or the image-free mask head throughout both student training stages. As shown in Table~\ref{tab:decoder_ablation}, the SAM-only and head-only variants achieve $85.08\%$ and $84.39\%$ cIoU on RefCOCO val, respectively, both below the full PLAS ($85.66\%$). Although the head-only variant reduces model-side latency from $0.43$~s to $0.34$~s, it incurs a noticeable accuracy drop. These results demonstrate that the stage-specific decoding strategy effectively coordinates latent representation learning and segmentation optimization, leading to improved segmentation performance.
+
+
+\begin{table}[!t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{1.9pt}
+  \renewcommand{\arraystretch}{0.96}
+  \caption{Ablation of the decoding model. \emph{SAM path} decodes both student stages through the SAM mask decoder; \emph{head path} decodes both through the Stage-I image-free head. Time is model-side latency. cIoU (\%).}
+  \label{tab:decoder_ablation}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llccc|cc|ccc|c}
+    \toprule
+    \multirow{2}{*}{Path} & \multirow{2}{*}{Checkpoint} & \multicolumn{3}{c|}{RefCOCO} & \multicolumn{3}{c|}{RefCOCO+} & \multicolumn{2}{c|}{RefCOCOg} & \multirow{2}{*}{\shortstack{Time\\(s)}} \\
+    & & val & testA & testB & val & testA & testB & val & test & \\
+    \midrule
+    \multirow{2}{*}{SAM} & Stage~II-A & 83.55 & 84.67 & 80.95 & 80.20 & 83.05 & 75.79 & 80.80 & 81.58 & \multirow{2}{*}{0.43} \\
+    & Stage~II-B & 85.08 & 86.35 & 82.80 & 81.80 & 84.98 & 77.85 & 83.07 & 83.53 & \\
+    \midrule
+    \multirow{2}{*}{Head} & Stage~II-A & 81.03 & 81.61 & 79.07 & 77.80 & 80.44 & 74.55 & 78.33 & 78.50 & \multirow{2}{*}{0.34} \\
+    & Stage~II-B & 84.39 & 85.33 & 82.09 & 81.03 & 84.10 & 76.58 & 83.04 & 82.45 & \\
+    \midrule
+    \textbf{PLAS (Ours)} & Stage~II-B & \best{85.66} & \best{86.56} & \best{83.27} & \best{81.94} & \best{85.02} & \best{77.90} & \best{83.73} & \best{83.77} & 0.43 \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+\subsection{Qualitative latent alignment}
+\label{sec:latent_visual}
+To inspect whether the learned latent preserves spatial structure, we visualize student--teacher alignment on four RefCOCO validation examples
+in \cref{fig:cosine-map}. The decoded masks agree closely inside the referred objects, where cosine similarity remains high. Lower similarity is concentrated near boundaries and small structures, suggesting that the remaining discrepancies are mainly local contour shifts rather than semantic mismatches.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=0.9\columnwidth,trim=18 18 18 0,clip]{fig/cosine_map_cropped.pdf}
+  \caption{Qualitative student--teacher latent alignment on RefCOCO val. Cosine similarity is high inside referred objects and drops mainly near boundaries.}
+  \label{fig:cosine-map}
+\end{figure}
+
+\subsection{Ablation of latent-guided initialization}
+\label{sec:scratch_ablation}
+
+We next investigate whether the complete
+latent-guided training pipeline is preferable
+to direct end-to-end mask optimization.
+\Cref{tab:scratch_ablation} compares the full
+PLAS framework with mask-only training and
+implicit latent transfer. The \textbf{Full} model uses Stage-I teacher initialization, Stage-II-A student warmup, latent-alignment supervision, and the image-conditioned mask losses in \cref{sec:training}. The \textbf{Mask-only scratch} model removes the teacher initialization and alignment path: it loads neither the Stage-I teacher nor the Stage-II-A student, initializes the prompt adapter, latent adapter, text--spatial attention, and SAM decoder from the task-training setup, and optimizes only the final mask BCE and Dice losses. We also evaluate a \textbf{Decoder-initialized (implicit latent)} variant. It removes explicit latent alignment but initializes the Stage-II student with the Stage-I SAM decoder, allowing decoder weights to transfer the geometry learned in Stage~I. Qwen3-VL and SAM-H use their official pretrained weights in all settings.
+
+\begin{table}[!t]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{2.0pt}
+  \renewcommand{\arraystretch}{0.96}
+  \caption{Ablation on latent-guided initialization.}
+  \label{tab:scratch_ablation}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lccc|ccc|cc}
+    \toprule
+    \multirow{2}{*}{Training configuration} & \multicolumn{3}{c|}{RefCOCO} & \multicolumn{3}{c|}{RefCOCO+} & \multicolumn{2}{c}{RefCOCOg} \\
+    & val & testA & testB & val & testA & testB & val & test \\
+    \midrule
+    Mask-only scratch & 84.12 & 85.29 & 81.62 & 80.36 & 83.83 & 76.15 & 80.97 & 81.80 \\
+    implicit latent & 84.67 & {86.36} & {82.55} & 81.53 & 84.76 & 77.54 & 82.52 & 83.20 \\
+    \textbf{Full} & \best{85.66} & \best{86.56} & \best{83.27} & \best{81.94} & \best{85.02} & \best{77.90} & \best{83.73} & \best{83.77} \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+
+
+
+\section{Conclusion}
+
+We presented PLAS, which reads a spatially organized mask latent from MLLM hidden states in a single forward pass, trains it through a progressive teacher--student schedule derived from ground-truth masks, and decodes it with an image-conditioned SAM path. PLAS attains competitive cIoU on RefCOCO, RefCOCO+, RefCOCOg, and gRefCOCO with a model-side latency of $0.43$~s per image on a single RTX~4090D. At inference the teacher and auxiliary head are discarded. Future work will pursue more compact latents, sharper boundaries, and video and open-vocabulary extensions.
+
+\paragraph{Limitations}
+\label{sec:limitations}
+
+PLAS employs a single MLLM forward pass for efficient
+spatial feature readout, but this design also limits
+iterative refinement of multimodal representations.
+For challenging expressions involving complex
+relational or compositional semantics, the model may
+struggle to distinguish visually similar objects
+or correctly resolve part--whole relationships,
+leading to inaccurate target selection.
+Furthermore, the fixed spatial resolution of the
+readout grid and mask latent may limit the
+representation of thin structures and fine-grained
+object boundaries.
+
+\section*{LLM Usage Statement}
+
+Generative AI tools, including OpenAI ChatGPT, were
+used selectively to assist with manuscript preparation,
+primarily for language refinement, occasional drafting
+and restructuring of author-provided content, literature
+summarization, and routine code debugging.
+The research methodology, model development,
+experimental execution, and reported results were
+independently developed and verified by the authors.
+All AI-assisted content was carefully reviewed and
+revised by the authors, who take full responsibility
+for the accuracy and integrity of this work.
+

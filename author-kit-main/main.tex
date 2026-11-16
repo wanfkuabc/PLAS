@@ -1,0 +1,102 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+% CVPR 2027 review version
+\usepackage[review]{cvpr}
+
+% Additional packages
+\input{preamble}
+
+\usepackage{placeins}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+
+% Algorithm formatting
+\SetAlFnt{\rmfamily}
+\SetAlCapFnt{\rmfamily\bfseries}
+\SetAlCapNameFnt{\rmfamily\itshape}
+
+\SetKwSty{textbf}
+\SetArgSty{textnormal}
+\SetNlSty{textnormal}{}{}
+\DontPrintSemicolon
+
+% Hyperlinks
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+
+\usepackage[
+pagebackref,
+breaklinks,
+colorlinks,
+allcolors=cvprblue
+]{hyperref}
+
+% Conference information
+\def\confName{CVPR}
+\def\confYear{2027}
+
+\title{PLAS: Progressive Latent Alignment with Parallel Mask-Latent Prediction for Referring Image Segmentation}
+
+\author{First Author\\
+	Institution1\\
+	Institution1 address\\
+	{\tt\small firstauthor@i1.org}
+	\and
+	Second Author\\
+	Institution2\\
+	First line of institution2 address\\
+	{\tt\small secondauthor@i2.org}
+}
+
+\begin{document}
+	
+	\crefname{algocf}{Algorithm}{Algorithms}
+	\Crefname{algocf}{Algorithm}{Algorithms}
+	
+	\maketitle
+	% `strip` is a sequential cross-column block, not a float, so it stays here
+	% on page 1. It cannot contain a float: a `figure*` inside it raises
+	% "Float(s) lost" and its label never gets written. Use \captionof instead.
+	\begin{strip}
+	\centering
+	\includegraphics[width=0.9\linewidth, trim=18 18 18 18,clip]{fig/overview.pdf}
+	\captionsetup{hypcap=false}
+	\captionof{figure}{
+		Overview of PLAS and its reported accuracy--efficiency
+		measurements. Existing MLLM-based segmentation methods
+		employ token embeddings, localization symbols, or
+		patch-level predictions to connect multimodal
+		representations with mask prediction.
+		In contrast, PLAS introduces learnable spatial
+		readout tokens within the MLLM to extract
+		segmentation-aware features in parallel through
+		a single forward pass. The extracted features
+		are mapped into spatially organized mask latents,
+		explicitly aligned with mask-level geometry during
+		training, and transformed into dense prompts for
+		image-conditioned SAM decoding.
+		The inset reports the corresponding cIoU values.
+	}
+	\captionsetup{hypcap=true}
+	\label{fig:overview}
+	\end{strip}
+	\input{sec/0_abstract}
+	\input{sec/1_intro}
+	\input{sec/2_related_work}
+	\input{sec/3_method}
+	\input{sec/4_experiments}
+	
+	{
+		\small
+		\bibliographystyle{ieeenat_fullname}
+		\bibliography{main}
+	}
+
+	\clearpage
+	\appendix
+	\maketitlesupplementary
+	\input{sec/5_appendix}
+
+\end{document}
+
+
+
+

@@ -1,0 +1,1217 @@
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+PLAS: Progressive Latent Alignment for Referring Image Segmentation
+Anonymous CVPR submission
+Paper ID *****
+Abstract
+Referring image segmentation aims to accurately localize
+001
+and segment target instances based on natural language
+002
+descriptions. Although multimodal large language mod-
+003
+els possess powerful visual-language understanding ca-
+004
+pabilities, a significant gap remains between their high-
+005
+dimensional semantic representations and the fine-grained
+006
+spatial structures required for pixel-level segmentation,
+007
+limiting the effective translation of semantic understand-
+008
+ing into precise segmentation. To address this, this pa-
+009
+per proposes a Progressive Latent Alignment framework
+010
+for Referring Image Segmentation (PLAS), which achieves
+011
+progressive optimization from multimodal semantic under-
+012
+standing to pixel-level segmentation through masked la-
+013
+tent representation learning, cross-modal feature align-
+014
+ment, and segmentation task adaptation. Specifically, a
+015
+teacher model—comprising a mask encoder, an auxiliary
+016
+reconstruction branch, and a SAM decoding branch—is first
+017
+constructed to learn masked latent representations that cap-
+018
+ture spatial structures and exhibit robustness to noise. Sub-
+019
+sequently, latent space alignment and auxiliary mask re-
+020
+construction supervision guide the multimodal large lan-
+021
+guage model to map multimodal semantic features into the
+022
+target mask latent space. Finally, leveraging latent space
+023
+constraints and pixel-level segmentation supervision, the
+024
+prompt adaptation module and SAM decoder are jointly op-
+025
+timized to effectively transform latent representations into
+026
+fine-grained segmentation masks. This framework decou-
+027
+ples semantic representation learning from segmentation
+028
+task adaptation through progressive training and eliminates
+029
+the need for the teacher model or auxiliary reconstruction
+030
+branches during inference.
+031
+1. Introduction
+032
+Referring image segmentation (RIS) requires a model to
+033
+identify the instance described by a natural-language ex-
+034
+pression and to delineate that instance at pixel resolution.
+035
+The RefCOCO and RefCOCO+ benchmarks established the
+036
+standard short-expression setting, while RefCOCOg evalu-
+037
+Figure 1. Comparison of referring segmentation paradigms. Ex-
+isting systems directly predict mask tokens, polygon coordinates,
+or text-conditioned mask tokens. PLAS predicts a compact mask
+latent, aligns it with a teacher latent learned from ground-truth
+masks, and decodes it through a prompt adapter and an image-
+conditioned mask decoder.
+ates longer, compositional descriptions [21, 32]. The task 038
+therefore couples two types of reasoning: multimodal un- 039
+derstanding is needed to resolve expressions such as “the 040
+black dog,” while dense visual decoding is needed to pre- 041
+serve boundaries and small structures. Vision–language 042
+models provide strong semantic representations, but their 043
+hidden states are arranged as language-oriented tokens and 044
+do not directly specify a spatially coherent mask. This rep- 045
+resentation gap becomes especially visible when several in- 046
+stances share the same category or when the referred object 047
+occupies only a small region of the image. 048
+Most recent multimodal segmentation systems ask a 049
+large language model (LLM) to emit a mask token, poly- 050
+gon coordinates, or a grid of mask tokens and then decode 051
+1
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+that output into pixels [3, 10, 11, 22, 23, 29]. These de-
+052
+signs attach the segmentation objective to the language out-
+053
+put space. The resulting supervision is useful for semantic
+054
+grounding, but it forces a high-dimensional, heterogeneous
+055
+language representation to carry fine spatial geometry. Fig-
+056
+ure 1 summarizes this distinction: the common paradigms
+057
+predict a mask, coordinates, or discrete mask tokens di-
+058
+rectly, whereas the proposed model first predicts a compact
+059
+mask latent and decodes it with an image-conditioned seg-
+060
+mentation module.
+061
+We propose PLAS (Progressive Latent Alignment for
+062
+Referring Image Segmentation), a teacher–student frame-
+063
+work that makes the representation interface explicit. A
+064
+convolutional teacher encodes the ground-truth mask into
+065
+a normalized 32 × 32 × 32 latent. The latent is learned to-
+066
+gether with an image-free reconstruction head and a SAM-
+067
+based image-conditioned decoder; SAM provides a prompt-
+068
+able dense image representation that is well suited to this
+069
+interface [9]. A LLaVA/Qwen student then reads multi-
+070
+modal features from the image and referring expression,
+071
+predicts the teacher latent, and converts it into a dense SAM
+072
+prompt through a unified latent–prompt adapter. Training
+073
+proceeds progressively: teacher pretraining establishes the
+074
+latent manifold, latent warmup aligns multimodal features
+075
+with that manifold, and task adaptation optimizes the final
+076
+image-conditioned mask.
+077
+The key difference from direct mask, coordinate, and
+078
+text-as-mask prediction is the location of the alignment con-
+079
+straint. In direct prediction, the language model is opti-
+080
+mized against the final output representation. In PLAS, the
+081
+student is first required to match a spatial latent whose de-
+082
+coder is learned from ground-truth masks. This latent align-
+083
+ment supplies a stable geometric target before the prompt
+084
+branch is adapted, while the subsequent mask loss still al-
+085
+lows the model to correct errors that matter at the original
+086
+image resolution. The teacher is used only during training;
+087
+inference retains the multimodal student, the adapter, and
+088
+the SAM decoder.
+089
+Our contributions are threefold:
+090
+• We introduce a normalized mask latent space that pro-
+091
+vides a compact, spatially structured interface between
+092
+multimodal understanding and pixel-level decoding.
+093
+• We design a progressive teacher–student optimization
+094
+scheme with image-free reconstruction, latent align-
+095
+ment, noise-robust decoding, and image-conditioned
+096
+SAM adaptation.
+097
+• We show how the latent–prompt adapter converts the
+098
+aligned latent into dense SAM prompts, yielding a single
+099
+inference path that requires only an image and a referring
+100
+expression.
+101
+2. Related Work 102
+2.1. Referring image segmentation 103
+RIS has evolved from convolutional language–vision fu- 104
+sion models to systems built on multimodal large language 105
+models. Early transformer-based methods use language- 106
+conditioned attention or cross-modal fusion to predict a 107
+dense mask, including VLT and LAVT [4, 30]; CLIP-driven 108
+alignment provides another strong formulation [27]. Subse- 109
+quent work studies generalized or weakly supervised set- 110
+tings, including multi-target and null-target expressions, 111
+text-only supervision, and zero-shot transfer [6, 12, 14, 15, 112
+34]. More recent approaches reuse the generative interface 113
+of an MLLM: the model emits a special segmentation token, 114
+a sequence of polygon coordinates, or a set of spatial mask 115
+tokens that is interpreted by a subsequent decoder. These 116
+formulations benefit from the broad semantic prior of the 117
+language model, but they place the burden of spatial recon- 118
+struction on the language output space. They also use dif- 119
+ferent output units for semantic supervision and geometric 120
+supervision, which can make optimization sensitive to tok- 121
+enization, coordinate length, and the resolution of the output 122
+grid. 123
+2.2. MLLM-based mask and prompt decoding 124
+MLLM-based segmenters generally follow one of two pat- 125
+terns. The first extends the language vocabulary with a spe- 126
+cial token whose hidden state is mapped to a mask embed- 127
+ding, as in LISA and GSVA [10, 29]; PixelLM and GLaMM 128
+further use pixel-oriented codebooks or grounding modules 129
+for multi-target reasoning [22, 23]. The second asks the 130
+model to generate explicit spatial entities such as polygons 131
+or a grid of foreground tokens, as explored by SAM4MLLM 132
+and Text4Seg [3, 11]. Both patterns keep semantic reason- 133
+ing and mask generation in a single autoregressive stream. 134
+Promptable foundation segmenters offer a complementary 135
+alternative: an image encoder stores dense visual features 136
+and a lightweight prompt encoder and mask decoder turn 137
+points, boxes, or learned dense prompts into masks [9]. Our 138
+method combines these strengths. The MLLM resolves the 139
+referring expression, while the latent–prompt adapter trans- 140
+lates its aligned spatial representation into a dense prompt 141
+for the image-conditioned decoder. 142
+2.3. Latent alignment for dense prediction 143
+Latent supervision has been used to transfer information 144
+between networks, but the target representation is often a 145
+global embedding or an intermediate feature with no ex- 146
+plicit reconstruction contract. PLAS uses a different inter- 147
+face: the teacher latent is obtained directly from the tar- 148
+get mask and is jointly constrained by two decoders. The 149
+image-free head forces the latent to retain mask geometry 150
+without relying on the image, and the SAM path forces it 151
+2
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+to remain useful when combined with image features. The
+152
+normalized latent therefore acts as a task-defined coordinate
+153
+system rather than an unconstrained feature distillation tar-
+154
+get.
+155
+This distinction also changes the training schedule. Di-
+156
+rect mask supervision can expose an unstable prompt
+157
+branch to large errors at the beginning of training. PLAS
+158
+first aligns the student to the teacher latent and its image-
+159
+free reconstruction, then activates the image-conditioned
+160
+SAM loss. Noise injection around the teacher latent fur-
+161
+ther trains the decoders to tolerate the prediction error that
+162
+remains after alignment. The resulting objective connects
+163
+semantic grounding, geometric reconstruction, and prompt
+164
+adaptation through a common latent interface.
+165
+3. Method
+166
+3.1. Problem formulation and overview
+167
+Given an RGB image I and a referring expression e, re-
+168
+ferring image segmentation (RIS) predicts a binary mask y
+169
+for the object described by e. The visual–language model
+170
+produces a semantic, token-level representation, whereas
+171
+segmentation requires a dense and spatially precise out-
+172
+put. PLAS bridges these spaces with a compact normalized
+173
+mask latent and a three-stage teacher–student training pro-
+174
+cedure.
+175
+As illustrated in Fig. 2, the method contains a mask-
+176
+latent teacher, a multimodal student, and a unified latent–
+177
+prompt bridge F. The teacher defines a geometrically
+178
+meaningful latent target from the ground-truth mask. The
+179
+student then predicts this target from I and e, after which
+180
+the predicted latent is converted into a dense prompt for
+181
+SAM. The three stages separate latent construction, latent
+182
+prediction, and image-conditioned mask adaptation, which
+183
+keeps the target representation stable while the student is
+184
+optimized.
+185
+3.2. Task formulation and latent–prompt interface
+186
+We resize each ground-truth mask to a 256 × 256 canvas.
+187
+Let zT
+denote the teacher mask latent, zS
+the student latent,
+188
+and S the frozen SAM-H image feature. The mask encoder
+189
+and normalization operator produce
+190
+zT
+= Norm(Em(y)) , zT
+∈ R32×32×32
+. (1)
+191
+The normalization is applied to the channel vector at each
+192
+spatial location and rescales it to a fixed root-mean-square
+193
+magnitude. This bounded representation makes the teacher
+194
+target easier to regress and reduces the effect of scale varia-
+195
+tion across masks.
+196
+The frozen SAM-H image encoder extracts dense image
+197
+features following the promptable image-encoder/mask-
+198
+decoder design of SAM [9]:
+199
+S = ESAM(I), S ∈ R256×64×64
+. (2)
+200
+The unified bridge F contains the latent projection, text– 201
+spatial readout, dense-prompt generation, and image- 202
+prompt calibration layers. We write its prompt branch as 203
+∆p = Fprompt(z, S), (3) 204
+where z can be either a teacher or student latent. The SAM 205
+mask decoder then produces a mask from (S, ∆p). An 206
+image-free mask head Dm is also used during training to 207
+directly reconstruct a mask from z; it is discarded at infer- 208
+ence. 209
+3.3. Three-stage progressive training 210
+Stage I: Mask-latent teacher pretraining. Stage I con- 211
+structs the mask-latent manifold using ground-truth masks. 212
+The teacher latent is decoded by an image-free mask head, 213
+ŷT
+head = Dm(zT
+), (4) 214
+and by the image-conditioned SAM path, 215
+∆pT
+= Fprompt(zT
+, S), ŷT
+SAM = DSAM(S, ∆pT
+).
+(5) 216
+To make the decoding paths tolerant to the regression errors 217
+expected from the student, we perturb the teacher latent as 218
+e
+zT
+= Norm(zT
++ ϵ), (6) 219
+where the relative noise magnitude is linearly increased 220
+from 0 to 0.4 during the first 30% of Stage I. Both the noisy 221
+latent and the clean latent are used for image-free recon- 222
+struction, while the noisy latent is used for the robust SAM 223
+path. 224
+The mask encoder Em, image-free head Dm, and bridge 225
+F are optimized in Stage I. We first keep the SAM mask 226
+decoder fixed for a warmup pass and may then tune it 227
+with a smaller learning rate; the SAM image encoder re- 228
+mains frozen. With LBCE and LDice denoting binary cross- 229
+entropy and soft Dice losses, the objective is 230
+LI = LSAM-BCE(e
+zT
+) + LSAM-Dice(e
+zT
+) (7) 231
++ Lhead-BCE(e
+zT
+) + Lhead-Dice(e
+zT
+) (8) 232
++ 0.5
+
+Lhead-BCE(zT
+) + Lhead-Dice(zT
+)
+
+. (9) 233
+Here each loss is evaluated after decoding the indicated la- 234
+tent. The noisy terms enlarge the valid decoding neighbor- 235
+hood around the target latent, while the clean-head terms 236
+preserve the reconstruction quality of the latent itself. 237
+Stage II: Student latent warmup. After Stage I, the 238
+complete teacher and SAM components are frozen. The 239
+student receives the image and expression jointly and ob- 240
+tains multimodal hidden states from a Qwen3-VL/LLaVA 241
+backbone [1, 16]: 242
+H = Q(I, e; θQ). (10) 243
+3
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+Figure 2. Overview of the proposed text-conditioned mask latent segmentation framework. Stage I learns a normalized mask latent and
+robust decoding paths from ground-truth masks. Stage II trains the multimodal student to predict the teacher latent. Stage III adapts the
+image-conditioned latent-to-SAM prompt path for referring segmentation. Dashed boxes indicate frozen modules in the corresponding
+stage.
+Hidden states from layers −1, −9, and −17 are fused with
+244
+learnable 16 × 16 grid readout tokens. Let R(·) denote this
+245
+multi-layer readout. The latent branch of the bridge predicts
+246
+zS
+= Flatent(R(H)) , zS
+∈ R32×32×32
+. (11)
+247
+During this warmup, zS
+is decoded only by the frozen
+248
+image-free head,
+249
+ŷS
+head = Dm(zS
+). (12)
+250
+The SAM prompt path is not evaluated by default, avoid-
+251
+ing an unstable image-conditioned branch before the latent
+252
+prediction becomes reliable.
+253
+The Qwen3-VL/LLaVA LoRA parameters, grid read-
+254
+out, latent projection, and text–spatial attention are updated.
+255
+The Stage-I teacher, SAM image encoder, SAM prompt en-
+256
+coder, and image-prompt calibration branch remain frozen
+257
+or inactive. The Stage-II objective aligns the student with
+258
+the teacher and supervises the image-free reconstruction: 259
+LII = Llatent +0.1 Lrel +Lhead-BCE(zS
+)+Lhead-Dice(zS
+),
+(13) 260
+where 261
+Llatent = MSE(zS
+, zT
+), Lrel = E
+
+∥zS
+− zT
+∥2
+∥zT ∥2 + ε
+
+.
+(14) 262
+The teacher latent is detached in this stage, so the student 263
+learns a fixed spatial target rather than changing the latent 264
+space while it is being regressed. 265
+Stage III: Image-conditioned task adaptation. Stage III 266
+starts from the Stage-II student checkpoint. The student 267
+again predicts zS
+from (I, e), and the frozen SAM image 268
+encoder extracts S. The prompt branch converts the pre- 269
+dicted latent into an image-conditioned dense prompt: 270
+∆pS
+= Fprompt(zS
+, S), ℓS
+= DSAM(S, ∆pS
+), (15) 271
+4
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+Algorithm 1 PLAS Inference
+Require: Test set Dtest = {(Ii, ei)}N
+i=1; threshold τ; pre-
+trained Qwen3-VL-8B and SAM-H; Stage-I Teacher
+checkpoint and final Student checkpoint
+Ensure: Predicted masks {ŷi}N
+i=1
+1: for each (Ii, ei) ∈ Dtest do
+2: Hi ← Qwen3-VL-8B(Ii, ei)
+3: zS
+i ← Latent Adapter(Hi)
+4: Si ← SAM-H Image Encoder(Ii)
+5: ∆pS
+i ← Prompt Adapter(zS
+i , Si)
+6: ℓi,256 ← SAM-H Mask Decoder(Si, ∆pS
+i )
+7: ℓi,I ← SAM Crop-and-Resize(ℓi,256, size(Ii))
+8: ŷi ← I[σ(ℓi,I) ≥ τ]
+9: Store ŷi with the identifier of (Ii, ei)
+10: return {ŷi}N
+i=1
+where ℓS
+denotes the mask logits before resizing and thresh-
+272
+olding. The final mask is obtained by applying the sigmoid
+273
+and post-processing operation at the original image resolu-
+274
+tion.
+275
+The student LoRA and readout layers, latent and prompt
+276
+branches, image-prompt calibration layers, and the selected
+277
+upper SAM mask-decoder layers are updated. The teacher
+278
+encoder and head, SAM image encoder, and SAM prompt
+279
+encoder stay frozen; the teacher latent is used only as a su-
+280
+pervision target. The default student b setting tunes the
+281
+upper decoder path, while full-decoder tuning is treated as
+282
+an ablation. The Stage-III objective is
+283
+LIII = Llatent + 0.1 Lrel (16)
+284
++ 2.0 Lmask-BCE + 2.0 Lmask-Dice. (17)
+285
+The implementation supports an additional smooth same-
+286
+category ranking loss based on hard-negative latents. This
+287
+term is disabled in the default recipe because the training
+288
+configuration uses zero weight and does not provide a dis-
+289
+tractor cache; it is therefore excluded from the reported ob-
+290
+jective.
+291
+3.4. Inference
+292
+At inference time, only the image I and referring expression
+293
+e are provided. As summarized in Algorithm 1, the student
+294
+first encodes the image–text pair and predicts the mask la-
+295
+tent zS
+using Eq. (11). The frozen SAM image encoder then
+296
+extracts image features S. The unified adapter combines
+297
+zS
+and S to generate the dense SAM prompt ∆pS
+accord-
+298
+ing to Eq. (15). Finally, the SAM mask decoder produces
+299
+the mask logits, which are thresholded and post-processed
+300
+to the original image resolution. The teacher, ground-truth
+301
+masks, image-free auxiliary head, and external point or box
+302
+prompts are not used during inference.
+303
+4. Experiments 304
+4.1. Experimental setup 305
+Datasets. We evaluate on four standard referring segmen- 306
+tation benchmarks. RefCOCO and RefCOCO+ contain 307
+short expressions collected for referring-expression com- 308
+prehension, with RefCOCO+ suppressing explicit location 309
+words; RefCOCOg contains longer, compositional descrip- 310
+tions [21, 32]. We also evaluate on gRefCOCO, which ex- 311
+tends the setting to multiple referred objects and expres- 312
+sions with no valid target [14]. We use the conventional val- 313
+idation and test splits: val, testA, and testB for RefCOCO 314
+and RefCOCO+, val and test for RefCOCOg, and val, testA, 315
+and testB for gRefCOCO. 316
+Metrics. For RefCOCO, RefCOCO+, and RefCOCOg, 317
+we report cumulative IoU (cIoU), computed as the cumu- 318
+lative intersection divided by the cumulative union over the 319
+evaluation set. For gRefCOCO, we report both cIoU and 320
+generalized IoU (gIoU), following the benchmark conven- 321
+tion. cIoU emphasizes aggregate pixel accuracy, while gIoU 322
+averages the per-expression IoU and therefore reflects per- 323
+formance across examples with different object sizes. All 324
+values are percentages; higher is better. 325
+Training details. We train PLAS on six NVIDIA 326
+RTX 4090D GPUs, each with 24 GB of memory. The per- 327
+device batch size is 1, and gradients are accumulated over 328
+16 steps, yielding an effective batch size of 96 under data- 329
+parallel training. We clip the global gradient norm to 2.0. 330
+The MLLM is adapted with parameter-efficient LoRA fine- 331
+tuning while the original Qwen weights remain frozen, fol- 332
+lowing the low-rank adaptation strategy of Hu et al. [5]. We 333
+use LoRA rank r = 64, scaling factor α = 128, dropout 334
+0.05, and no bias term. 335
+Comparison protocol. The PLAS row is obtained from 336
+the experiments described in Sec. 3. Results for prior meth- 337
+ods are transcribed from their reported benchmark tables. 338
+4.2. Main results on single-object referring segmen- 339
+tation 340
+Table 1 shows that PLAS is particularly effective on the 341
+expression-driven RefCOCO+ benchmark. It achieves the 342
+best cIoU on all three RefCOCO+ splits, improving over 343
+the strongest reported CVPR 2026 result by 1.44, 0.42, and 344
+1.00 points on val, testA, and testB, respectively. On Ref- 345
+COCO, PLAS remains competitive with the strongest large- 346
+backbone methods, while on RefCOCOg it ranks second on 347
+both splits among the methods listed. 348
+5
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+Table 1. Comparison on RefCOCO, RefCOCO+, and RefCOCOg
+using cIoU (%). The best and second-best values in each column
+are shown in bold and underline, respectively.
+Method
+RefCOCO RefCOCO+ RefCOCOg
+val testA testB val testA testB val test
+Method without LLMs
+VLT [4] 67.50 70.50 65.20 56.30 61.00 50.10 55.00 57.70
+CRIS [27] 70.50 73.20 66.10 62.30 68.10 53.70 59.90 60.40
+LAVT [30] 72.70 75.80 68.80 62.10 68.40 55.10 61.20 62.10
+ReLA [14] 73.80 76.50 70.20 66.00 71.00 57.70 65.00 66.00
+X-Decoder [37] – – – – – – 64.60 –
+SEEM [38] – – – – – – 65.70 –
+Latent Query Alignment Method
+LISA-7B [10] 74.90 79.10 72.30 65.10 70.80 58.10 67.90 70.60
+LISA-13B 76.00 78.80 72.90 65.00 70.20 58.10 69.50 70.50
+GSVA-7B [29] 75.10 78.60 71.70 68.50 73.90 61.30 70.30 71.70
+GSVA-13B 75.30 79.10 72.10 68.90 74.00 61.90 70.70 71.90
+GroundHog-7B [36] 78.50 79.90 75.70 70.50 75.00 64.90 74.10 74.60
+LaSagnA-7B [28] 76.80 78.70 73.80 66.40 70.60 60.10 70.60 71.90
+OMG-LLaVA-7B [35] 78.00 80.30 74.10 69.10 73.10 63.00 72.90 72.90
+LIRA-8B [13] 81.80 83.40 78.10 76.30 81.10 70.50 78.40 78.20
+HiMTok-8B [25] 85.90 86.30 83.90 80.50 83.70 76.40 80.10 80.90
+UniRES-7B [26] 80.80 83.00 75.80 71.60 76.00 64.40 73.80 74.10
+RAS-13B [2] 81.00 83.50 79.00 75.10 80.00 70.30 76.00 77.50
+X-SAM-3.8B [24] 85.10 87.10 83.40 78.00 81.00 74.40 83.80 83.90
+Textual Localization Readout Method
+SAM4MLLM-7B [3] 79.60 82.80 76.10 73.50 77.80 65.80 74.50 75.60
+Seg-R1-7B [31] 74.30 78.70 67.60 62.60 70.90 57.90 71.00 71.40
+Seg-Zero-7B [18] – 80.30 – – 76.20 – – 72.60
+VisionReasoner-7B [19] – 78.90 – – 74.90 – – 71.30
+SAM-R1-7B [7] – 79.20 – – 74.70 – – 73.10
+Text4Seg-7B [11] 79.30 81.90 76.20 72.10 77.60 66.10 72.10 73.90
+Text4Seg-13B [11] 80.20 82.70 77.30 73.70 78.60 67.60 74.00 75.10
+Interpretable Alignment and All-mask Methods
+STAMP-2B [17] 81.90 83.70 79.50 77.10 80.50 72.70 78.50 78.80
+STAMP-7B [17] 83.10 84.50 80.80 79.40 82.80 74.60 79.90 80.40
+SegCompass-7B 85.30 87.50 83.60 78.30 84.70 76.60 82.80 81.00
+SegCompass-13B [20] 86.30 87.30 84.10 80.50 84.60 76.90 84.00 81.30
+PLAS (Ours) 85.66 86.56 83.27 81.94 85.02 77.90 83.73 83.77
+4.3. Results on generalized referring segmentation
+349
+On gRefCOCO, PLAS obtains the best result in every re-
+350
+ported column. The gains are consistent for both aggregate
+351
+overlap and per-expression quality, which is important for
+352
+the multi-object and no-target cases in this benchmark. In
+353
+particular, the improvement over the strongest CVPR 2026
+354
+cIoU baseline is 2.68 points on val, 2.50 points on testA,
+355
+and 1.91 points on testB.
+356
+5. Ablation
+357
+5.1. Ablation of the progressive student training
+358
+We compare the two student-training configurations to
+359
+quantify the contribution of the progressive design.
+360
+Stage II-A denotes the latent warmup configuration: the
+361
+student predicts zS
+and is supervised by latent alignment
+362
+and the frozen image-free mask head. Stage II-B activates
+363
+the image-conditioned latent-to-SAM prompt path and adds
+364
+the original-resolution mask losses. In the three-stage de-
+365
+scription in Sec. 3.3, these settings correspond to the latent-
+366
+prediction stage and the subsequent task-adaptation stage,
+367
+Table 2. Comparison on gRefCOCO. We report cIoU and gIoU
+(%) in the order specified by the column headers. The best and
+second-best values in each metric column are shown in bold and
+underline, respectively.
+Method
+val testA testB
+cIoU gIoU cIoU gIoU cIoU gIoU
+Method without LLMs
+MattNet [33] 47.50 48.20 58.60 59.30 45.30 46.10
+LTS [8] 52.30 52.70 61.80 62.60 49.90 50.40
+VLT [4] 52.50 52.00 62.10 63.20 50.50 50.80
+CRIS [27] 55.30 56.20 63.80 63.40 51.00 51.70
+LAVT [30] 57.60 58.40 65.30 65.90 55.00 55.80
+ReLA [14] 62.40 63.60 69.30 70.00 59.90 61.00
+Latent Query Alignment Method
+LISA-7B [10] 61.70 61.60 68.50 66.20 60.60 58.80
+LISA-13B 62.90 63.40 69.60 68.10 62.20 61.80
+GSVA-7B [29] 63.30 66.50 69.90 71.10 60.50 62.20
+GSVA-13B 64.00 68.00 70.50 71.80 61.30 63.80
+GroundHog-7B [36] – 66.70 – – – –
+LaSagnA-7B [28] 38.10 32.40 50.40 47.30 42.10 38.90
+OMG-LLaVA-7B [35] 39.30 36.10 52.40 50.10 43.70 42.20
+LIRA-8B [13] 40.90 36.70 52.40 50.40 44.90 42.40
+HiMTok-8B [25] 70.40 72.10 74.90 73.50 72.00 71.70
+UniRES-7B [26] 69.90 74.40 74.50 76.00 66.60 69.80
+RAS-13B [2] 70.50 74.60 77.00 77.50 67.90 69.40
+Textual Localization Readout Method
+SAM4MLLM-7B [3] 67.80 71.90 72.20 74.20 63.40 65.30
+Text4Seg-7B [11] 67.90 73.60 72.80 74.10 64.80 66.10
+Text4Seg-13B [11] 69.80 74.80 74.30 75.10 67.10 68.00
+Interpretable Alignment and All-mask Methods
+STAMP-2B [17] 72.20 76.40 75.70 76.50 73.40 69.80
+STAMP-7B [17] 73.60 77.60 77.20 77.60 71.60 71.40
+SegCompass-7B 70.60 75.00 72.60 76.10 66.70 68.20
+SegCompass-7B (Qwen) 72.20 76.10 76.50 76.80 72.80 70.00
+SegCompass-13B [20] 72.20 76.80 77.30 77.70 72.40 71.90
+PLAS (Ours) 76.28 83.99 79.80 80.35 74.31 73.55
+Table 3. Ablation of the progressive student training. Stage II-
+A uses latent warmup with image-free mask supervision, while
+Stage II-B additionally activates image-conditioned SAM decod-
+ing and mask supervision. Results are cIoU (%).
+Training stage
+RefCOCO RefCOCO+ RefCOCOg
+val testA testB val testA testB val test
+Stage II-A 84.32 85.12 81.84 80.45 83.63 75.96 81.98 82.16
+Stage II-B 85.66 86.56 83.27 81.94 85.02 77.90 83.73 83.77
+respectively. 368
+Stage II-B improves over Stage II-A on every split. The 369
+gains are +1.34, +1.43, and +1.44 cIoU points on Ref- 370
+COCO val, testA, and testB, respectively; +1.49, +1.40, 371
+and +1.93 points on RefCOCO+; and +1.75 and +1.61 372
+points on RefCOCOg val and test. The average improve- 373
+ment across the eight reported splits is +1.55 cIoU points. 374
+These consistent gains show that latent alignment provides a 375
+stable initialization, while image-conditioned prompt adap- 376
+6
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+Table 4. Stage-I teacher latent reconstruction under Gaussian la-
+tent noise on RefCOCO val. gIoU values are percentages; ∆ is
+measured relative to the clean latent (σ = 0).
+σ SAM gIoU Mask head gIoU ∆ SAM ∆ head
+0.0 98.45 98.37 0.00 0.00
+0.1 98.39 98.31 -0.06 -0.06
+0.2 98.24 98.14 -0.21 -0.24
+0.3 98.02 97.88 -0.43 -0.49
+0.4 97.77 97.58 -0.68 -0.80
+0.5 97.47 97.19 -0.98 -1.18
+Image GT Head clean Mask clean Head noisy( ) Mask noisy( )
+Figure 3. Qualitative teacher-latent reconstruction under latent
+noise. From left to right, we show the input image, ground-truth
+mask, clean reconstruction from the image-free head, clean recon-
+struction from the SAM path, and reconstructions from the noisy
+latent at σ = 0.4. The noisy reconstructions preserve the object
+identity and coarse shape, while their boundaries become progres-
+sively softer, especially around thin structures and object contours.
+tation is necessary to translate the aligned latent into the
+377
+final high-quality referring mask.
+378
+5.2. Teacher latent reconstruction and noise robust-
+379
+ness
+380
+We first verify that the Stage-I teacher latent is a meaningful
+381
+mask representation before using it as the student target. On
+382
+the RefCOCO validation split, we decode the teacher latent
+383
+through the image-conditioned SAM path and the image-
+384
+free 256 × 256 mask head. To test robustness, we add zero-
+385
+mean perturbations with standard deviation σ to the nor-
+386
+malized latent, decode the perturbed latent, and threshold
+387
+the predicted masks at 0.55. Each setting is evaluated on
+388
+the same 760 validation examples. The results are reported
+389
+in Table 4.
+390
+5.3. Ablation of latent-guided initialization
+391
+We further evaluate whether the complete latent-guided
+392
+training pipeline is preferable to direct end-to-end mask op-
+393
+timization. The Full model uses the Stage-I teacher initial-
+394
+ization, the Stage-II student warmup, latent alignment su-
+395
+pervision, and the image-conditioned mask losses described
+396
+Table 5. Ablation of latent-guided multi-stage initialization. Full
+uses the complete teacher–student pipeline and explicit latent
+alignment. Mask-only scratch directly optimizes the final mask
+losses from the task-training initialization. Decoder-initialized
+(implicit latent) removes the explicit latent constraint but reuses
+the Stage-I SAM decoder for Stage II training. Results are cIoU
+(%); – denotes an unmeasured split.
+Training configuration
+RefCOCO RefCOCO+ RefCOCOg
+val testA testB val testA testB val test
+Mask-only scratch 84.12 85.29 81.62 80.36 83.83 76.15 80.97 81.80
+implicit latent 84.67 86.36 82.55 81.53 84.76 77.54 82.52 83.20
+Full 85.66 86.56 83.27 81.94 85.02 77.90 83.73 83.77
+in Sec. 3.3. The Mask-only scratch model removes this 397
+initialization and alignment path: it loads neither the Stage- 398
+I teacher nor the Stage-II-A student, initializes the prompt 399
+adapter, latent adapter, text–spatial attention, and SAM de- 400
+coder from the task-training setup, and optimizes only the 401
+final mask BCE and Dice losses. We additionally evaluate a 402
+Decoder-initialized (implicit latent) variant. This variant 403
+removes the explicit latent-alignment constraint but initial- 404
+izes the Stage-II student with the SAM decoder trained in 405
+Stage I, allowing the decoder weights to transfer the geom- 406
+etry encoded during Stage I. Qwen3-VL and SAM-H are 407
+initialized from their official pretrained weights in all set- 408
+tings. 409
+5.4. Efficiency–performance trade-off 410
+In addition to segmentation quality, we evaluate the infer- 411
+ence cost of the compared systems. Figure 4 plots cIoU 412
+against the per-image inference time under the measure- 413
+ment protocol used to produce the figure. PLAS with the 414
+1024-token configuration is located in the upper-left corner 415
+of the plot: it reaches approximately 85.7 cIoU while re- 416
+quiring about 0.5 s per image. This is a favorable Pareto 417
+position compared with methods that require substantially 418
+longer decoding times while obtaining lower or comparable 419
+cIoU. 420
+The efficiency comes from the compact latent interface. 421
+At inference, PLAS predicts one spatial mask latent from 422
+the image–expression pair and converts it into a dense SAM 423
+prompt. It therefore avoids iterative mask-token generation 424
+and uses the frozen image encoder only once per image. 425
+The result is a short inference path that preserves the strong 426
+segmentation accuracy reported in Tables 1 and 2. The tim- 427
+ing comparison is hardware and implementation dependent, 428
+so the figure is used to characterize the relative efficiency– 429
+accuracy trend under the same evaluation protocol. 430
+References 431
+[1] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui 432
+Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, 433
+7
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+STAMP,896
+STAMP,896
+STAMP,726
+STAMP,504
+Seg-Zero
+READ
+LISA
+LISA
+PixelLM
+STAMP,896
+SegAgent
+PLAS(OURS),1024
+Moondream Seg
+Text4Seg++
+Figure 4. Inference efficiency versus segmentation performance.
+PLAS (ours) with the 1024-token configuration achieves a strong
+cIoU at a substantially lower inference time, placing it near the
+favorable upper-left Pareto region.
+Chunjiang Ge, et al. Qwen3-vl technical report. arXiv
+434
+preprint arXiv:2511.21631, 2025. 3
+435
+[2] Shengcao Cao, Zijun Wei, Jason Kuen, Kangning Liu,
+436
+Lingzhi Zhang, Jiuxiang Gu, HyunJoon Jung, Liang-Yan
+437
+Gui, and Yu-Xiong Wang. Refer to any segmentation mask
+438
+group with vision-language prompts. In Proceedings of
+439
+the IEEE/CVF International Conference on Computer Vision
+440
+(ICCV), 2025. 6
+441
+[3] Yi-Chia Chen, Wei-Hua Li, Cheng Sun, Yu-Chiang Frank
+442
+Wang, and Chu-Song Chen. Sam4mllm: Enhance multi-
+443
+modal large language model for referring expression seg-
+444
+mentation. In European Conference on Computer Vision
+445
+(ECCV), pages 1–18, 2024. 2, 6
+446
+[4] Henghui Ding, Chang Liu, Suchen Wang, and Xudong Jiang.
+447
+Vision-language transformer and query generation for refer-
+448
+ring segmentation. In Proceedings of the IEEE/CVF In-
+449
+ternational Conference on Computer Vision (ICCV), pages
+450
+16321–16330, 2021. 2, 6
+451
+[5] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-
+452
+Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+453
+Lora: Low-rank adaptation of large language models. In In-
+454
+ternational Conference on Learning Representations (ICLR),
+455
+2022. 5
+456
+[6] Yutao Hu, Qixiong Wang, Wenqi Shao, Enze Xie, Zhenguo
+457
+Li, Jungong Han, and Ping Luo. Beyond one-to-one: Re-
+458
+thinking the referring image segmentation. In Proceedings
+459
+of the IEEE/CVF International Conference on Computer Vi-
+460
+sion (ICCV), pages 4067–4077, 2023. 2
+461
+[7] Jiaqi Huang, Zunnan Xu, Jun Zhou, Ting Liu, Yicheng Xiao,
+462
+Mingwen Ou, Bowen Ji, Xiu Li, and Kehong Yuan. Sam-
+463
+r1: Leveraging sam for reward feedback in multimodal seg-
+464
+mentation via reinforcement learning. In Advances in Neural
+465
+Information Processing Systems (NeurIPS), 2025. 6
+466
+[8] Ya Jing, Tao Kong, Wei Wang, Liang Wang, Lei Li, and Tie-
+467
+niu Tan. Locate then segment: A strong pipeline for refer-
+468
+ring image segmentation. arXiv preprint arXiv:2103.16284, 469
+2021. 6 470
+[9] Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, 471
+Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer White- 472
+head, Alexander C. Berg, Wan-Yen Lo, Piotr Dollar, and 473
+Ross Girshick. Segment anything. In Proceedings of the 474
+IEEE/CVF International Conference on Computer Vision 475
+(ICCV), pages 4015–4026, 2023. 2, 3 476
+[10] Xin Lai, Zhuotao Tian, Yukang Chen, Yanwei Li, Yuhui 477
+Yuan, Shu Liu, and Jiaya Jia. Lisa: Reasoning segmentation 478
+via large language model. In Proceedings of the IEEE/CVF 479
+Conference on Computer Vision and Pattern Recognition 480
+(CVPR), pages 9579–9589, 2024. 2, 6 481
+[11] Mengcheng Lan, Chaofeng Chen, Yue Zhou, Jiaxing Xu, 482
+Yiping Ke, Xinjiang Wang, Litong Feng, and Wayne Zhang. 483
+Text4seg: Reimagining image segmentation as text genera- 484
+tion. In International Conference on Learning Representa- 485
+tions (ICLR), 2025. 2, 6 486
+[12] Jungbeom Lee, Sungjin Lee, Jinseok Nam, Seunghak Yu, 487
+Jaeyoung Do, and Tara Taghavi. Weakly supervised refer- 488
+ring image segmentation with intra-chunk and inter-chunk 489
+consistency. In Proceedings of the IEEE/CVF International 490
+Conference on Computer Vision (ICCV), pages 21870– 491
+21881, 2023. 2 492
+[13] Zhang Li, Biao Yang, Qiang Liu, Shuo Zhang, Zhiyin Ma, 493
+Liang Yin, Linger Deng, Yabo Sun, Yuliang Liu, and Xiang 494
+Bai. Lira: Inferring segmentation in large multi-modal mod- 495
+els with local interleaved region assistance. arXiv preprint 496
+arXiv:2507.06272, 2025. 6 497
+[14] Chang Liu, Henghui Ding, and Xudong Jiang. Gres: Gener- 498
+alized referring expression segmentation. In Proceedings of 499
+the IEEE/CVF Conference on Computer Vision and Pattern 500
+Recognition (CVPR), pages 23592–23601, 2023. 2, 5, 6 501
+[15] Fang Liu, Yuhao Liu, Yuqiu Kong, Ke Xu, Lihe Zhang, Bao- 502
+cai Yin, Gerhard Hancke, and Rynson Lau. Referring im- 503
+age segmentation using text supervision. In Proceedings of 504
+the IEEE/CVF International Conference on Computer Vision 505
+(ICCV), pages 22124–22134, 2023. 2 506
+[16] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 507
+Visual instruction tuning. In Advances in Neural Information 508
+Processing Systems (NeurIPS), 2023. 3 509
+[17] Jiazhen Liu, Mingkuan Feng, and Long Chen. Better, 510
+stronger, faster: Tackling the trilemma in mllm-based seg- 511
+mentation with simultaneous textual mask prediction. In 512
+CVPR, pages 33121–33130, 2026. 6 513
+[18] Yuqi Liu, Bohao Peng, Zhisheng Zhong, Zihao Yue, Fanbin 514
+Lu, Bei Yu, and Jiaya Jia. Seg-zero: Reasoning-chain guided 515
+segmentation via cognitive reinforcement. arXiv preprint 516
+arXiv:2503.06520, 2025. 6 517
+[19] Yuqi Liu, Tianyuan Ou, Zhisheng Zhong, Bohao Peng, 518
+Shu Liu, Bei Yu, and Jiaya Jia. Visionreasoner: Uni- 519
+fied reasoning-integrated visual perception via reinforcement 520
+learning. In International Conference on Learning Represen- 521
+tations (ICLR), 2026. 6 522
+[20] Zhenyu Lu, Liupeng Li, Jinpeng Wang, Haoqian Kang, Yan 523
+Feng, Ke Chen, and Yaowei Wang. Segcompass: Explor- 524
+ing interpretable alignment with sparse autoencoders for en- 525
+8
+CVPR
+#*****
+CVPR
+#*****
+CVPR 2027 Submission #*****. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.
+hanced reasoning segmentation. In CVPR, pages 19132–
+526
+19142, 2026. 6
+527
+[21] Junhua Mao, Jonathan Huang, Alexander Toshev, Oana
+528
+Camburu, Alan L. Yuille, and Kevin Murphy. Generation and
+529
+comprehension of unambiguous object descriptions. In Pro-
+530
+ceedings of the IEEE Conference on Computer Vision and
+531
+Pattern Recognition (CVPR), pages 11–20, 2016. 1, 5
+532
+[22] Hanoona Rasheed, Muhammad Maaz, Sahal Shaji, Abdel-
+533
+rahman Shaker, Salman Khan, Hisham Cholakkal, Rao M.
+534
+Anwer, Eric Xing, Ming-Hsuan Yang, and Fahad S. Khan.
+535
+Glamm: Pixel grounding large multimodal model. In Pro-
+536
+ceedings of the IEEE/CVF Conference on Computer Vision
+537
+and Pattern Recognition (CVPR), pages 13009–13018, 2024.
+538
+2
+539
+[23] Zhongwei Ren, Zhicheng Huang, Yunchao Wei, Yao Zhao,
+540
+Dongmei Fu, Jiashi Feng, and Xiaojie Jin. Pixellm: Pixel
+541
+reasoning with large multimodal model. In Proceedings of
+542
+the IEEE/CVF Conference on Computer Vision and Pattern
+543
+Recognition (CVPR), pages 26374–26383, 2024. 2
+544
+[24] Hao Wang, Limeng Qiao, Zequn Jie, Zhijian Huang,
+545
+Chengjian Feng, Qingfang Zheng, Lin Ma, Xiangyuan Lan,
+546
+and Xiaodan Liang. X-sam: From segment anything to any
+547
+segmentation. arXiv preprint arXiv:2508.04655, 2025. 6
+548
+[25] Tao Wang, Changxu Cheng, Lingfeng Wang, Senda Chen,
+549
+and Wuyue Zhao. Himtok: Learning hierarchical mask to-
+550
+kens for image segmentation with large multimodal model.
+551
+In Proceedings of the IEEE/CVF International Conference
+552
+on Computer Vision (ICCV), pages 23267–23278, 2025. 6
+553
+[26] Wenxuan Wang, Tongtian Yue, Yisi Zhang, Longteng Guo,
+554
+Xingjian He, Xinlong Wang, and Jing Liu. Unveiling parts
+555
+beyond objects: Towards finer-granularity referring expres-
+556
+sion segmentation. In Proceedings of the IEEE/CVF Confer-
+557
+ence on Computer Vision and Pattern Recognition (CVPR),
+558
+pages 12998–13008, 2024. 6
+559
+[27] Zhaoqing Wang, Yu Lu, Qiang Li, Xunqiang Tao, Yandong
+560
+Guo, Mingming Gong, and Tongliang Liu. Cris: Clip-
+561
+driven referring image segmentation. In Proceedings of
+562
+the IEEE/CVF Conference on Computer Vision and Pattern
+563
+Recognition (CVPR), pages 11686–11695, 2022. 2, 6
+564
+[28] Cong Wei, Haoxian Tan, Yujie Zhong, Yujiu Yang, and Lin
+565
+Ma. Lasagna: Language-based segmentation assistant for
+566
+complex queries. arXiv preprint arXiv:2404.08506, 2024. 6
+567
+[29] Zhuofan Xia, Dongchen Han, Yizeng Han, Xuran Pan, Shiji
+568
+Song, and Gao Huang. Gsva: Generalized segmentation
+569
+via multimodal large language models. In Proceedings of
+570
+the IEEE/CVF Conference on Computer Vision and Pattern
+571
+Recognition (CVPR), pages 3858–3869, 2024. 2, 6
+572
+[30] Zhao Yang, Jiaqi Wang, Yansong Tang, Kai Chen, Heng-
+573
+shuang Zhao, and Philip H. S. Torr. Lavt: Language-aware
+574
+vision transformer for referring image segmentation. In Pro-
+575
+ceedings of the IEEE/CVF Conference on Computer Vision
+576
+and Pattern Recognition (CVPR), pages 18155–18165, 2022.
+577
+2, 6
+578
+[31] Zuyao You and Zuxuan Wu. Seg-r1: Segmentation can
+579
+be surprisingly simple with reinforcement learning. arXiv
+580
+preprint arXiv:2506.22624, 2025. 6
+581
+[32] Licheng Yu, Patrick Poirson, Shan Yang, Alexander C. Berg,
+582
+and Tamara L. Berg. Modeling context in referring expres-
+583
+sions. In European Conference on Computer Vision (ECCV), 584
+pages 69–85, 2016. 1, 5 585
+[33] Licheng Yu, Zhe Lin, Xiaohui Shen, Jimei Yang, Xin Lu, 586
+Mohit Bansal, and Tamara L. Berg. Mattnet: Modular atten- 587
+tion network for referring expression comprehension. In Pro- 588
+ceedings of the IEEE Conference on Computer Vision and 589
+Pattern Recognition (CVPR), pages 1307–1315, 2018. 6 590
+[34] Seonghoon Yu, Paul Hongsuck Seo, and Jeany Son. Zero- 591
+shot referring image segmentation with global-local context 592
+features. In Proceedings of the IEEE/CVF Conference on 593
+Computer Vision and Pattern Recognition (CVPR), pages 594
+19456–19465, 2023. 2 595
+[35] Tao Zhang, Xiangtai Li, Hao Fei, Haobo Yuan, Shengqiong 596
+Wu, Shunping Ji, Chen Change Loy, and Shuicheng Yan. 597
+Omg-llava: Bridging image-level, object-level, pixel-level 598
+reasoning and understanding. In Advances in Neural Infor- 599
+mation Processing Systems (NeurIPS), 2024. 6 600
+[36] Yichi Zhang, Ziqiao Ma, Xiaofeng Gao, Suhaila Shakiah, 601
+Qiaozi Gao, and Joyce Chai. Groundhog: Grounding large 602
+language models to holistic segmentation. In Proceedings of 603
+the IEEE/CVF Conference on Computer Vision and Pattern 604
+Recognition (CVPR), pages 14227–14238, 2024. 6 605
+[37] Xueyan Zou, Zi-Yi Dou, Jianwei Yang, Zhe Gan, Linjie Li, 606
+Chunyuan Li, Xiyang Dai, Harkirat Behl, Jianfeng Wang, Lu 607
+Yuan, Nanyun Peng, Lijuan Wang, Yong Jae Lee, and Jian- 608
+feng Gao. Generalized decoding for pixel, image, and lan- 609
+guage. In Proceedings of the IEEE/CVF Conference on Com- 610
+puter Vision and Pattern Recognition (CVPR), pages 15116– 611
+15127, 2023. 6 612
+[38] Xueyan Zou, Jianwei Yang, Hao Zhang, Feng Li, Linjie Li, 613
+Jianfeng Wang, Lijuan Wang, Jianfeng Gao, and Yong Jae 614
+Lee. Segment everything everywhere all at once. In Ad- 615
+vances in Neural Information Processing Systems (NeurIPS), 616
+2023. 6 617
+9
+

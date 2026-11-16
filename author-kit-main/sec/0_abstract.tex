@@ -1,0 +1,24 @@
+
+\begin{abstract}
+	Referring image segmentation (RIS) requires grounding
+	language expressions in images and recovering pixel-accurate
+	masks. Existing multimodal large language model (MLLM)
+	segmenters often bottleneck dense mask geometry at the
+	interface between multimodal reasoning and mask decoding,
+	limiting spatial detail and efficiency. We propose
+	\textbf{PLAS}, an efficient RIS framework based on learnable
+	multimodal feature readout and progressive mask-latent
+	alignment. PLAS introduces learnable spatial readout tokens
+	into the MLLM and extracts multimodal features in parallel
+	from multiple transformer layers. A progressive teacher--student
+	framework transfers mask geometry through teacher pretraining,
+	latent warmup, and image-conditioned adaptation. The readout
+	features are fused with visual-grid information, aligned with
+	teacher mask latents, and converted into dense prompts for SAM
+	decoding. Experiments on RefCOCO, RefCOCO+, RefCOCOg, and
+	gRefCOCO show that PLAS matches or surpasses leading
+	segmentation methods while achieving a model-side latency of
+	\textbf{0.43~s per image}. It is \textbf{1.63$\times$} faster than
+	the fastest compared method and \textbf{2.49$\times$} faster
+	than a method with comparable segmentation accuracy.
+\end{abstract}

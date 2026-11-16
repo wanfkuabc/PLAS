@@ -1,0 +1,34 @@
+name: text4seg-plas
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.4.*
+  - torchvision=0.19.*
+  - pytorch-cuda=12.1
+  - pip:
+      - "transformers>=4.57.0,<5"
+      - "tokenizers>=0.21"
+      - "accelerate>=1.0"
+      - "peft>=0.14"
+      - deepspeed
+      - qwen-vl-utils==0.0.14
+      - sentencepiece
+      - safetensors
+      - pillow
+      - numpy==1.26.*
+      - pycocotools
+      - opencv-python
+      - tqdm
+      - packaging
+      - fvcore
+      - iopath
+      - tensorboard
+      # Install FlashAttention after creating the environment when the CUDA/toolchain matches:
+      # pip install -U flash-attn --no-build-isolation
+
+
+

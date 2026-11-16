@@ -1,0 +1,215 @@
+\begin{table}[t]
+	\centering
+	\caption{\textbf{Comparison of MLLM segmentation paradigms.}
+		AR: autoregressive; P-pred.: parallel prediction;
+		P-read.: parallel hidden-state readout.
+		Steps count segmentation-output steps after the textual prefix.
+		For fixed-length outputs, $\mathcal{O}(1)$ denotes a constant
+		number of generated positions.}
+	\label{tab:paradigms}
+	
+	\scriptsize
+	\setlength{\tabcolsep}{1.3pt}
+	\renewcommand{\arraystretch}{1.03}
+	
+	\resizebox{\columnwidth}{!}{%
+		\begin{tabular}{@{}llcccc@{}}
+			\toprule
+			Model
+			& Output
+			& Steps
+			& Readout
+			& Target
+			& Dec. \\
+			\midrule
+			
+			\multicolumn{6}{@{}l}{%
+				\itshape Paradigm 1: Embedding prediction} \\
+			
+			LISA~\cite{Lai2024LISA}
+			& $1$ emb.
+			& $\mathcal{O}(1)$
+			& AR
+			& Token emb.
+			& SAM \\
+			
+			GSVA~\cite{Xia2024GSVA}
+			& $1$ emb.
+			& $\mathcal{O}(1)$
+			& AR
+			& Token emb.
+			& SAM \\
+			
+			GLaMM~\cite{Rasheed2024GLaMM}
+			& $N_t$ embs.
+			& $\mathcal{O}(1)$
+			& AR
+			& Token embs.
+			& SAM \\
+			
+			PixelLM~\cite{Ren2024PixelLM}
+			& $N_t$ embs.
+			& $\mathcal{O}(N_{\rm seg})$
+			& AR
+			& Token embs.
+			& MLP+SAM \\
+			
+			\midrule
+			\multicolumn{6}{@{}l}{%
+				\itshape Paradigm 2: Sequential localization} \\
+			
+			SAM4MLLM~\cite{Chen2024SAM4MLLM}
+			& Coords.
+			& $\mathcal{O}(N_{\rm pts})$
+			& AR
+			& Coords.
+			& SAM \\
+			
+			Seg-Zero~\cite{Liu2025SegZero}
+			& CoT+coords.
+			& $\mathcal{O}(N_{\rm CoT})$
+			& AR
+			& Coords.
+			& SAM \\
+			
+			SegAgent~\cite{Zhu2025SegAgent}
+			& CoT+coords.
+			& $\mathcal{O}(N_{\rm CoT})$
+			& AR
+			& Coords.
+			& SAM \\
+			
+			Text4Seg~\cite{Lan2025Text4Seg}
+			& Patch cls.
+			& $\mathcal{O}(N_{\rm p})$
+			& AR
+			& Patch
+			& -- \\
+			
+			\midrule
+			\multicolumn{6}{@{}l}{%
+				\itshape Paradigm 3: All-mask prediction} \\
+			
+			STAMP~\cite{Liu2026STAMP}
+			& Patch cls.
+			& $\mathcal{O}(1)$
+			& P-pred.
+			& Patch
+			& -- \\
+			
+			\midrule
+			\multicolumn{6}{@{}l}{%
+				\itshape Paradigm 4: Dense latent prediction} \\
+			
+			\textbf{PLAS (Ours)}
+			& \textbf{Dense latent}
+			& $\mathcal{O}(1)$
+			& \textbf{P-read.}
+			& \textbf{Mask latent}
+			& \textbf{SAM} \\
+			
+			\bottomrule
+		\end{tabular}%
+	}
+\end{table}
+
+
+
+\section{Related Work}
+\label{sec:related}
+
+\noindent\textbf{MLLM-based referring image segmentation.}
+Recent advances in multimodal large language models
+(MLLMs) have enabled powerful visual-language
+reasoning for referring image segmentation (RIS).
+LISA~\cite{Lai2024LISA} and
+GSVA~\cite{Xia2024GSVA} employ segmentation-token
+embeddings to guide SAM-based mask decoding, while
+GLaMM~\cite{Rasheed2024GLaMM} extends this approach
+to pixel-level grounding with an image-conditioned
+decoder. PixelLM~\cite{Ren2024PixelLM} introduces
+a multi-scale segmentation codebook and a lightweight
+pixel decoder to integrate segmentation-token
+embeddings with visual features.
+More recent methods explore alternative mask
+representation mechanisms.
+HiMTok~\cite{Wang2025HiMTok} learns hierarchical
+mask tokens for coarse-to-fine mask representation,
+while PSALM~\cite{Zhang2024PSALM} integrates mask
+tokens and a mask decoder within a unified
+segmentation framework.
+Other approaches, including
+SAM4MLLM~\cite{Chen2024SAM4MLLM},
+Seg-Zero~\cite{Liu2025SegZero},
+SegAgent~\cite{Zhu2025SegAgent}, and
+Text4Seg~\cite{Lan2025Text4Seg},
+formulate localization or segmentation through
+generated coordinates, reasoning sequences,
+or patch-level predictions.
+Although effective, these approaches employ
+different output interfaces to connect multimodal
+representations with pixel-level segmentation.
+In contrast, PLAS focuses on extracting spatially
+organized segmentation features directly from
+MLLM hidden states through learnable multimodal
+readout. By combining multi-layer feature fusion
+with explicit teacher-guided mask-latent alignment,
+PLAS transfers mask-level geometric knowledge
+to the parallel readout representations before
+image-conditioned SAM decoding.
+
+\noindent\textbf{Parallel prediction and multimodal
+	feature readout.}
+Recent methods have also explored parallel
+segmentation prediction to avoid autoregressive
+coordinate or patch generation.
+STAMP~\cite{Liu2026STAMP} simultaneously predicts
+mask units within a single forward pass,
+but its output remains a set of discrete patch
+decisions.
+However, parallel mask prediction differs
+from parallel multimodal feature readout:
+the former directly predicts segmentation
+outputs, whereas the latter focuses on
+extracting task-relevant representations
+from multimodal hidden states.
+PLAS adopts a learnable spatial readout
+mechanism that exploits image--text interactions
+within the MLLM and combines multi-layer
+hidden states with spatial refinement.
+This enables parallel extraction of
+segmentation-aware features without
+autoregressive mask-token generation.
+
+\noindent\textbf{Geometry-supervised alignment
+	and mask decoding.}
+Despite their strong semantic understanding,
+MLLM representations are not inherently
+optimized for pixel-level geometric prediction.
+Existing approaches typically bridge multimodal
+features and segmentation through feature
+projection, mask prompts, or external decoders
+\cite{Lai2024LISA,Rasheed2024GLaMM,
+Chen2024SAM4MLLM,Zou2023XDecoder}.
+SAM~\cite{Kirillov2023SAM} provides a powerful
+image-conditioned decoding framework that
+generates masks from sparse or dense prompts.
+However, optimizing segmentation primarily
+through final mask losses provides limited
+explicit supervision for the geometric
+structure of intermediate multimodal features.
+In contrast, PLAS constructs geometry-aware
+mask latents from ground-truth masks through
+dual reconstruction supervision.
+A progressive teacher--student framework
+then explicitly aligns spatially adapted
+parallel readout features with these
+teacher-derived mask latents before
+image-conditioned SAM decoding.
+This establishes a direct supervisory bridge
+between multimodal feature extraction
+and pixel-level mask geometry.
+
+
+
+
