@@ -13,15 +13,15 @@ Harbin Institute of Technology, Shenzhen</p>
 
 Referring image segmentation (RIS) aims to ground natural-language expressions in images and produce pixel-accurate masks. Despite advances in multimodal large language models (MLLMs), two challenges remain: efficiently extracting spatial information from their hidden states and constraining the resulting representations to preserve target-mask geometry. To address this, we propose **PLAS** (Parallel Layer-Aggregated Spatial Readout with Progressive Latent-Space Alignment), an efficient RIS framework coupling parallel spatial readout with geometry-supervised latent learning. Specifically, PLAS introduces learnable spatial readout tokens into the MLLM and extracts their hidden states at multiple Transformer depths within a single MLLM forward pass without autoregressive segmentation-token generation, aggregating them with learnable layer-wise weights to produce spatially organized multimodal representations. Furthermore, we develop a progressive teacher--student framework that learns decodable mask latents from annotated masks and transfers their geometric structure to student representations through explicit latent-space alignment, followed by image-conditioned adaptation. The predicted latents are then converted into dense prompts for SAM decoding. Extensive experiments across five challenging benchmarks demonstrate the competitive and leading performance of PLAS. On a single NVIDIA RTX 4090D, PLAS achieves a model-side inference latency of **0.43 s per image**, making it **1.63x** faster than the fastest competing method and **2.49x** faster than a method with comparable segmentation accuracy.
 
-### Three-stage training and inference pipeline
+### Overview
 
 <div align="center">
-<img src="./author-kit-main/fig/plas_three_stage_pipeline.png" alt="PLAS three-stage training and inference pipeline" width="920" />
+<img src="./author-kit-main/fig/overview.png" alt="Overview of PLAS" width="920" />
 </div>
 
 <p align="center"><em>Overview of PLAS and its reported accuracy--efficiency measurements. Existing MLLM-based segmentation methods employ token embeddings, localization symbols, or patch-level predictions to connect multimodal representations with mask prediction. In contrast, PLAS introduces learnable spatial readout tokens within the MLLM, whose hidden states are jointly extracted in a single forward pass under causal attention, without autoregressive segmentation-token generation. The extracted features are subsequently refined through bidirectional spatial interactions, mapped into mask latents, explicitly aligned with mask-level geometry during training, and transformed into dense prompts for image-conditioned SAM decoding. The inset compares segmentation accuracy (cIoU) against model-side inference latency across representative methods.</em></p>
 
-The source figures are available as [PNG](./author-kit-main/fig/plas_three_stage_pipeline.png), [architecture PDF](./author-kit-main/fig/architecture.pdf), and [overview PDF](./author-kit-main/fig/overview.pdf).
+The original vector figure is available as [`overview.pdf`](./author-kit-main/fig/overview.pdf).
 
 ## 1. Standalone layout
 
