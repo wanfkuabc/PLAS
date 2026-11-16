@@ -122,10 +122,47 @@ class MaskDecoder(nn.Module):
         output_tokens = output_tokens.unsqueeze(0).expand(sparse_prompt_embeddings.size(0), -1, -1)
         tokens = torch.cat((output_tokens, sparse_prompt_embeddings), dim=1)
 
-        # Expand per-image data in batch direction to be per-mask
-        src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
+        # SAM's original predictor receives one image and N prompt sets, so it
+        # repeats the image N times.  Training receives B images and one dense
+        # prompt per image; repeating here would incorrectly create B*B image
+        # embeddings.  Preserve the original single-image behavior while
+        # supporting an explicit one-image/one-prompt batch.
+        image_batch = image_embeddings.shape[0]
+        prompt_batch = tokens.shape[0]
+        if dense_prompt_embeddings.shape[0] != prompt_batch:
+            raise ValueError(
+                "dense_prompt_embeddings must have one entry per sparse prompt: "
+                f"got dense={dense_prompt_embeddings.shape[0]}, prompts={prompt_batch}."
+            )
+        if image_batch == prompt_batch:
+            src = image_embeddings
+            if image_pe.shape[0] == 1:
+                pos_src = image_pe.expand(prompt_batch, -1, -1, -1)
+            elif image_pe.shape[0] == prompt_batch:
+                pos_src = image_pe
+            else:
+                raise ValueError(
+                    "image_pe must have batch size 1 or match the prompt batch: "
+                    f"got image_pe={image_pe.shape[0]}, prompts={prompt_batch}."
+                )
+        elif image_batch == 1:
+            # Standard SAM predictor path: one image, multiple prompt sets.
+            src = torch.repeat_interleave(image_embeddings, prompt_batch, dim=0)
+            if image_pe.shape[0] == 1:
+                pos_src = torch.repeat_interleave(image_pe, prompt_batch, dim=0)
+            elif image_pe.shape[0] == prompt_batch:
+                pos_src = image_pe
+            else:
+                raise ValueError(
+                    "image_pe must have batch size 1 or match the prompt batch: "
+                    f"got image_pe={image_pe.shape[0]}, prompts={prompt_batch}."
+                )
+        else:
+            raise ValueError(
+                "MaskDecoder cannot infer image-to-prompt pairing for different "
+                f"batch sizes: images={image_batch}, prompts={prompt_batch}."
+            )
         src = src + dense_prompt_embeddings
-        pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
 
         # Run the transformer
@@ -174,6 +211,3 @@ class MLP(nn.Module):
         if self.sigmoid_output:
             x = F.sigmoid(x)
         return x
-
-
-

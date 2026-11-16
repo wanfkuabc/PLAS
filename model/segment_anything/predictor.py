@@ -7,11 +7,11 @@
 import numpy as np
 import torch
 
-from PLAS.model.segment_anything.modeling import Sam
+from .modeling import Sam
 
 from typing import Optional, Tuple
 
-from PLAS.model.segment_anything.utils.transforms import ResizeLongestSide
+from .utils.transforms import ResizeLongestSide
 
 
 class SamPredictor:
@@ -267,8 +267,4 @@ class SamPredictor:
         self.orig_w = None
         self.input_h = None
         self.input_w = None
-
-
-
-
 

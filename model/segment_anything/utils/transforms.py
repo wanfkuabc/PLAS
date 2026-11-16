@@ -100,6 +100,3 @@ class ResizeLongestSide:
         neww = int(neww + 0.5)
         newh = int(newh + 0.5)
         return (newh, neww)
-
-
-

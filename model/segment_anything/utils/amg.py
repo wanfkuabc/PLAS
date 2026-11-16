@@ -344,6 +344,3 @@ def batched_mask_to_box(masks: torch.Tensor) -> torch.Tensor:
         out = out[0]
 
     return out
-
-
-

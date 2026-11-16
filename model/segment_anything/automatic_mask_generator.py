@@ -370,6 +370,3 @@ class SamAutomaticMaskGenerator:
         mask_data.filter(keep_by_nms)
 
         return mask_data
-
-
-

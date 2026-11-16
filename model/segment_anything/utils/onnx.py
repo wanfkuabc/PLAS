@@ -142,6 +142,3 @@ class SamOnnxModel(nn.Module):
             return upscaled_masks, scores, stability_scores, areas, masks
 
         return upscaled_masks, scores, masks
-
-
-

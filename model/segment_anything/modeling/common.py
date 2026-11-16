@@ -41,6 +41,3 @@ class LayerNorm2d(nn.Module):
         x = (x - u) / torch.sqrt(s + self.eps)
         x = self.weight[:, None, None] * x + self.bias[:, None, None]
         return x
-
-
-

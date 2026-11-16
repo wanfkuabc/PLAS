@@ -1,17 +1,28 @@
-# PLAS Standalone
+# PLAS: Progressive Latent Alignment for Referring Image Segmentation
 
-这是从原 `llava6-3-8` 分支整理出的独立 Qwen3 dense-latent 版本。`PLAS/` 内包含运行这条实验链所需的模型、SAM、数据处理、训练和评估代码；运行时不再导入仓库中的 `llava1`、`llava4`、`llava5`、`llava6-3-8` 或其他分支。
+## Project overview
 
-原始 `llava6-3-8/` 目录没有删除。`PLAS/` 是一个独立副本，后续实验只需要使用本目录中的路径。
+**Authors:** YaoYang Liu, Haixia Cao, Yinglin Chen, Weijun Sun, Xiaozhao Fang, Shengli Xie, Jie Wen
 
-## 目录结构
+
+### Abstract
+
+Referring image segmentation (RIS) requires grounding language expressions in images and recovering pixel-accurate masks. Existing multimodal large language model segmenters often bottleneck dense mask geometry at the interface between multimodal reasoning and mask decoding, limiting spatial detail and efficiency. PLAS introduces learnable spatial readout tokens into the multimodal language model and extracts multimodal features in parallel from multiple transformer layers. A progressive teacher-student framework transfers mask geometry through teacher pretraining, latent warmup, and image-conditioned adaptation. Readout features are fused with visual-grid information, aligned with teacher mask latents, and converted into dense prompts for SAM decoding. The model is designed to preserve mask geometry while reducing the cost of final segmentation inference.
+
+### Three-stage training and inference pipeline
+
+![PLAS three-stage pipeline](author-kit-main/fig/overview.pdf)
+
+## 1. Standalone layout
+
+The original `llava6-3-8/` directory is preserved. The standalone PLAS implementation is contained in this directory and does not import code from other repository branches at runtime.
 
 ```text
 PLAS/
 ├── model/
 │   ├── qwen_dense_latent_refseg.py
 │   ├── mask_latent_teacher.py
-│   └── segment_anything/          # 本地 SAM 实现
+│   └── segment_anything/          # Local SAM implementation
 ├── train/
 │   ├── train_mask_latent_teacher.py
 │   ├── train_qwen_dense_latent_refseg.py
@@ -22,116 +33,178 @@ PLAS/
 │   ├── eval_qwen_dense_latent_refseg.py
 │   ├── eval_qwen_dense_latent_reasonseg.py
 │   └── benchmark_qwen_dense_latent_refseg.py
-├── pretrained/                    # 需要放 Qwen3 和 SAM 权重
-├── datasets/                      # 需要放数据集
-├── checkpoints/                   # 三阶段训练输出
-├── outputs/                       # 推理和测速结果
-├── configs/                       # 本地 DeepSpeed 配置
-└── scripts/                       # 三阶段训练/推理启动脚本
+├── tools/                         # Optional hard-negative utility
+├── pretrained/                    # Qwen3-VL and SAM weights
+├── datasets/                      # RefCOCO and ReasonSeg data
+├── checkpoints/                   # Three-stage checkpoints
+├── outputs/                       # Evaluation and benchmark outputs
+├── configs/                       # Local DeepSpeed configurations
+└── scripts/                       # Training and inference launchers
 ```
 
-## 1. 环境
+## 2. Environment
 
-在服务器上：
+The supplied environment file contains the required PyTorch, Transformers, PEFT, DeepSpeed, Qwen-VL utilities, COCO tools, and image-processing packages.
 
 ```bash
 cd /data2/lyy/Text4Seg-main
-conda env create -f PLAS/environment-PLAS-vl.yml
+conda env create -f PLAS/environment-plas.yml
 conda activate text4seg-plas
 ```
 
-如果环境已经存在，直接激活原来的 `PLASvl` 环境即可。除 Python 包外，代码不依赖其他仓库分支。
-
-## 2. 预训练模型放置位置
-
-把模型放到下面的位置。只在第一次整理时从旧目录复制，之后所有命令都使用 `PLAS/` 内的路径。
+If the environment already exists, activate that environment instead. FlashAttention can be installed separately when the CUDA and compiler versions match:
 
 ```bash
-cd /data2/lyy/Text4Seg-main
-
-mkdir -p PLAS/pretrained/Qwen3-VL-8B-Instruct
-mkdir -p PLAS/pretrained/sam_vit_h
-
-cp -a pre_trained/Qwen3-VL-8B-Instruct/. \
-  PLAS/pretrained/Qwen3-VL-8B-Instruct/
-cp pre_trained/sam_vit_h/sam_vit_h_4b8939.pth \
-  PLAS/pretrained/sam_vit_h/sam_vit_h_4b8939.pth
+pip install -U flash-attn --no-build-isolation
 ```
 
-整理完成后，训练和推理不再使用 `pre_trained/`。也可以直接执行一次 `bash PLAS/scripts/prepare_assets.sh` 自动复制旧目录中的可用模型、数据和 checkpoint。
+## 3. Pretrained model downloads
 
-## 3. 数据集放置位置
+### Qwen3-VL-8B-Instruct
 
-### RefCOCO 系列
+Official model page: [Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)
 
-目录应为：
+```bash
+mkdir -p PLAS/pretrained/Qwen3-VL-8B-Instruct
+huggingface-cli download Qwen/Qwen3-VL-8B-Instruct \
+  --local-dir PLAS/pretrained/Qwen3-VL-8B-Instruct
+```
+
+### SAM ViT-H
+
+Official checkpoint: [SAM ViT-H checkpoint](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth)
+
+```bash
+mkdir -p PLAS/pretrained/sam_vit_h
+wget -O PLAS/pretrained/sam_vit_h/sam_vit_h_4b8939.pth \
+  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+```
+
+The expected local paths are:
+
+```text
+PLAS/pretrained/Qwen3-VL-8B-Instruct/
+PLAS/pretrained/sam_vit_h/sam_vit_h_4b8939.pth
+```
+
+## 4. Dataset downloads and placement
+
+### 4.1 COCO 2014 images and annotations
+
+PLAS uses COCO 2014 train images for RefCOCO, RefCOCO+, RefCOCOg, and gRefCOCO.
+
+- [COCO 2014 train images](http://images.cocodataset.org/zips/train2014.zip)
+- [COCO 2014 train/val annotations](http://images.cocodataset.org/annotations/annotations_trainval2014.zip)
+- [COCO official download page](https://cocodataset.org/#download)
+
+```bash
+mkdir -p PLAS/datasets/refer_seg/images/coco_2014
+wget -O /tmp/train2014.zip http://images.cocodataset.org/zips/train2014.zip
+unzip /tmp/train2014.zip -d PLAS/datasets/refer_seg/images/coco_2014
+```
+
+The resulting image directory must be:
+
+```text
+PLAS/datasets/refer_seg/images/coco_2014/train2014/
+```
+
+### 4.2 RefCOCO, RefCOCO+, and RefCOCOg
+
+Official API and cleaned annotation repository: [lichengunc/refer](https://github.com/lichengunc/refer)
+
+Direct annotation archives:
+
+- [RefCOCO](https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcoco.zip)
+- [RefCOCO+](https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcoco+.zip)
+- [RefCOCOg](https://bvisionweb1.cs.unc.edu/licheng/referit/data/refcocog.zip)
+
+If the original UNC server is unavailable, use the alternative mirrors listed in the [refer repository download instructions](https://github.com/lichengunc/refer#download).
+
+Extract the archives so that the annotation files are available as follows:
 
 ```text
 PLAS/datasets/refer_seg/
-├── images/
-│   └── coco_2014/train2014/        # COCO 2014 图片
 ├── refcoco/
 │   ├── refs(unc).p
 │   └── instances.json
 ├── refcoco+/
 │   ├── refs(unc).p
 │   └── instances.json
-├── refcocog/
-│   ├── refs(umd).p
-│   └── instances.json
-└── grefcoco/
-    ├── grefs(unc).json
-    └── instances.json               # 也可以复用 refcoco/instances.json
+└── refcocog/
+    ├── refs(umd).p
+    └── instances.json
 ```
 
-复制示例：
+The default training recipe uses `refcoco|refcoco+|refcocog|grefcoco` with split identifiers `unc|unc|umd|unc`.
 
-```bash
-cp -a playground/data/refer_seg/. PLAS/datasets/refer_seg/
+### 4.3 gRefCOCO
+
+Official repository and data instructions: [henghuiding/gRefCOCO](https://github.com/henghuiding/gRefCOCO)
+
+Place the generalized referring-expression annotations under:
+
+```text
+PLAS/datasets/refer_seg/grefcoco/
+└── grefs(unc).json
 ```
 
-### ReasonSeg
+The gRefCOCO loader can reuse `PLAS/datasets/refer_seg/refcoco/instances.json` when a separate `grefcoco/instances.json` is not provided.
+
+### 4.4 ReasonSeg
+
+ReasonSeg is released with the LISA project.
+
+- [LISA repository and dataset instructions](https://github.com/JIA-Lab-research/LISA)
+- [ReasonSeg Google Drive folder](https://drive.google.com/drive/folders/125mewyg5Ao6tZ3ZdJ-1-E3n04LGVELqy?usp=sharing)
+
+The PLAS ReasonSeg evaluator expects each split directory to contain paired image and LabelMe-style JSON files:
 
 ```text
 PLAS/datasets/ReasonSeg/
 ├── val/
-│   ├── images/
-│   └── masks/
+│   ├── sample_000.jpg
+│   ├── sample_000.json
+│   └── ...
 └── test/
-    ├── images/
-    └── masks/
+    ├── sample_000.jpg
+    ├── sample_000.json
+    └── ...
 ```
 
-数据集根目录必须包含 `val/` 和 `test/`。推理时通过 `REASONSEG_ROOT=./PLAS/datasets/ReasonSeg` 指定。
+The evaluator also accepts a root directory containing `ReasonSeg_val/` or `ReasonSeg_test/` directories. Set `REASONSEG_ROOT` to the directory containing the split folders.
 
-## 4. Checkpoint 放置位置
+### 4.5 One-time asset import from the old repository layout
 
-已有权重复制到：
-
-```bash
-mkdir -p PLAS/checkpoints/stage1
-mkdir -p PLAS/checkpoints/stage2/phaseA_latent_warmup
-mkdir -p PLAS/checkpoints/stage2/phaseB_task_adaptation
-
-cp checkpoints/llava6-3-2/stage1/full/mask_latent_teacher.pt \
-  PLAS/checkpoints/stage1/mask_latent_teacher.pt
-cp checkpoints/llava6-3-8/stage2-1024/phaseA_latent_warmup/qwen_latent_student.pt \
-  PLAS/checkpoints/stage2/phaseA_latent_warmup/qwen_latent_student.pt
-cp checkpoints/llava6-3-8/stage2-1024/phaseB_task_adaptation/qwen_latent_student.pt \
-  PLAS/checkpoints/stage2/phaseB_task_adaptation/qwen_latent_student.pt
-```
-
-如果你的旧目录名称不同，只需要把源文件替换成实际的 Teacher、Phase-A Student 和 Phase-B Student 文件；目标路径保持不变。
-
-## 5. 三阶段训练
-
-以下命令默认使用 4 张 GPU。用 `CUDA_VISIBLE_DEVICES=0` 可以改成单卡调试。
-
-### Stage I：Teacher 预训练
+If the old repository assets are already available, this script copies them into the standalone PLAS directories:
 
 ```bash
 cd /data2/lyy/Text4Seg-main
-CUDA_VISIBLE_DEVICES=0,1,2,3 \
+bash PLAS/scripts/prepare_assets.sh
+```
+
+After this import, training and inference commands use only `PLAS/pretrained`, `PLAS/datasets`, and `PLAS/checkpoints`.
+
+## 5. Checkpoint layout
+
+```text
+PLAS/checkpoints/
+├── stage1/
+│   └── full/mask_latent_teacher.pt
+└── stage2/
+    ├── phaseA_latent_warmup/qwen_latent_student.pt
+    └── phaseB_task_adaptation/qwen_latent_student.pt
+```
+
+To import existing checkpoints from the old layout, run `PLAS/scripts/prepare_assets.sh` or copy them manually into the paths above.
+
+## 6. Three-stage training
+
+### Stage I: Teacher pretraining
+
+```bash
+cd /data2/lyy/Text4Seg-main
+CUDA_VISIBLE_DEVICES=0,1,2 \
 RUN_STAGE=pipeline \
 SAM_PATH=./PLAS/pretrained/sam_vit_h/sam_vit_h_4b8939.pth \
 DATA_ROOT=./PLAS/datasets/refer_seg \
@@ -139,14 +212,14 @@ OUTPUT_DIR=./PLAS/checkpoints/stage1 \
 bash PLAS/scripts/train_stage1_teacher.sh
 ```
 
-输出：
+Outputs:
 
 ```text
 PLAS/checkpoints/stage1/warmup/mask_latent_teacher.pt
 PLAS/checkpoints/stage1/full/mask_latent_teacher.pt
 ```
 
-### Stage II-A：Latent warmup
+### Stage II-A: Latent warmup
 
 ```bash
 cd /data2/lyy/Text4Seg-main
@@ -160,9 +233,9 @@ OUTPUT_DIR=./PLAS/checkpoints/stage2 \
 bash PLAS/scripts/train_stage2.sh
 ```
 
-Stage II-A 使用 Latent Alignment、image-free BCE 和 image-free Dice。
+Stage II-A optimizes latent alignment together with image-free BCE and Dice reconstruction losses.
 
-### Stage II-B：Task adaptation
+### Stage II-B: Image-conditioned task adaptation
 
 ```bash
 cd /data2/lyy/Text4Seg-main
@@ -177,15 +250,15 @@ OUTPUT_DIR=./PLAS/checkpoints/stage2 \
 bash PLAS/scripts/train_stage2.sh
 ```
 
-Stage II-B 输出：
+Output:
 
 ```text
 PLAS/checkpoints/stage2/phaseB_task_adaptation/qwen_latent_student.pt
 ```
 
-## 6. 三阶段推理/评估
+## 7. Three-stage inference and evaluation
 
-### Stage I Teacher 重建评估
+### Stage I: Teacher reconstruction evaluation
 
 ```bash
 cd /data2/lyy/Text4Seg-main
@@ -197,7 +270,7 @@ OUTPUT_DIR=./PLAS/outputs/stage1_teacher \
 bash PLAS/scripts/infer_stage1_teacher.sh
 ```
 
-### Stage II-A RefCOCO 推理
+### Stage II-A: RefCOCO evaluation
 
 ```bash
 cd /data2/lyy/Text4Seg-main
@@ -209,7 +282,7 @@ OUTPUT_DIR=./PLAS/outputs/refcoco_stage2a \
 bash PLAS/scripts/infer_refseg_stage2a.sh
 ```
 
-### Stage II-B RefCOCO 推理
+### Stage II-B: RefCOCO evaluation
 
 ```bash
 cd /data2/lyy/Text4Seg-main
@@ -221,7 +294,7 @@ OUTPUT_DIR=./PLAS/outputs/refcoco_stage2b \
 bash PLAS/scripts/infer_refseg_stage2b.sh
 ```
 
-### Stage II-B ReasonSeg 推理
+### Stage II-B: ReasonSeg evaluation
 
 ```bash
 cd /data2/lyy/Text4Seg-main
@@ -234,11 +307,13 @@ OUTPUT_DIR=./PLAS/outputs/reasonseg_stage2b_val \
 bash PLAS/scripts/infer_reasonseg_stage2b.sh
 ```
 
-将 `EVAL_SPLIT=test` 可评估 ReasonSeg test。
+Use `EVAL_SPLIT=test` for the ReasonSeg test split.
 
-## 7. 速度测量
+## 8. Latency benchmark
 
-速度测试必须单进程单卡，不能使用 `torchrun` 或 `deepspeed`：
+The latency benchmark is intentionally single-process and single-GPU. Do not launch it with `torchrun` or `deepspeed`.
+
+Smoke test:
 
 ```bash
 cd /data2/lyy/Text4Seg-main
@@ -251,19 +326,18 @@ OUTPUT_DIR=./PLAS/outputs/latency_10 \
 bash PLAS/scripts/benchmark_latency.sh
 ```
 
-通过 10 个样本后，将 `MAX_SAMPLES=0` 评估完整验证集。结果保存在 `latency_benchmark_sam.json` 和 `latency_samples_sam.csv`。
+Set `MAX_SAMPLES=0` for the complete validation split. The benchmark writes `latency_benchmark_sam.json` and `latency_samples_sam.csv`.
 
-## 8. 独立性检查
+## 9. Verification
 
-在仓库根目录执行：
+Run these checks from the repository root on the server:
 
 ```bash
-rg -n "from (llava|qwen)|import llava|llava5_v14_8|llava6-3-8" PLAS --glob '*.py'
+cd /data2/lyy/Text4Seg-main
+for script in PLAS/scripts/*.sh; do bash -n "$script"; done
+python -m compileall -q PLAS
+python -c "from PLAS.model.segment_anything import sam_model_registry; print(sorted(sam_model_registry))"
 ```
 
-其中允许出现旧 checkpoint format 字符串和历史注释；不应出现指向其他代码目录的 Python import。当前独立运行路径使用的是 `PLAS.model`、`PLAS.train` 和 `PLAS.eval`。
-
-
-
-
+The standalone implementation uses local `PLAS.*` imports. The Qwen3 model name is retained only where it refers to the actual pretrained Qwen3-VL checkpoint.
 
